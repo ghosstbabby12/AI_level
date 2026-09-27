@@ -1,0 +1,69 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.THEME_PALETTES = void 0;
+exports.THEME_PALETTES = {
+    ice: {
+        wall: "#7fb8d6",
+        wallAccent: "#dff3fb",
+        floor: "#e8f5fb",
+        floorAlt: "#d5ebf5",
+        top: "#ffffff",
+        sky: ["#bfe6f7", "#e8f5fb"],
+    },
+    lava: {
+        wall: "#5b1a1a",
+        wallAccent: "#ff6a2b",
+        floor: "#241010",
+        floorAlt: "#2d1414",
+        top: "#ff8a3c",
+        sky: ["#1a0808", "#3a1210"],
+    },
+    forest: {
+        wall: "#2f5d34",
+        wallAccent: "#4f8f52",
+        floor: "#cfe3b0",
+        floorAlt: "#c2d9a0",
+        top: "#6cbf4a",
+        sky: ["#8fd3f4", "#d8f1c8"],
+    },
+    desert: {
+        wall: "#c8933a",
+        wallAccent: "#e6b85c",
+        floor: "#f3dfb0",
+        floorAlt: "#ead29b",
+        top: "#f2c14e",
+        sky: ["#ffd89b", "#fbeecb"],
+    },
+    dungeon: {
+        wall: "#4a4a56",
+        wallAccent: "#6c6c7a",
+        floor: "#b9b6a8",
+        floorAlt: "#aeab9d",
+        top: "#6c6c7a",
+        sky: ["#2a2a33", "#3b3b46"],
+    },
+    overworld: {
+        wall: "#b5651d",
+        wallAccent: "#8a4a12",
+        floor: "#5c94fc",
+        floorAlt: "#5c94fc",
+        top: "#3fbf3f",
+        sky: ["#5c94fc", "#a8d0ff"],
+    },
+    water: {
+        wall: "#2b6a86",
+        wallAccent: "#4aa3c4",
+        floor: "#1b4f72",
+        floorAlt: "#1f5a80",
+        top: "#6fd3e8",
+        sky: ["#1b4f72", "#0d2c47"],
+    },
+    space: {
+        wall: "#3a3f5c",
+        wallAccent: "#7a83b8",
+        floor: "#0b0d1f",
+        floorAlt: "#101330",
+        top: "#9aa4e6",
+        sky: ["#05060f", "#141838"],
+    },
+};

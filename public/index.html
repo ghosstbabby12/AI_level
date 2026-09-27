@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Artificial Levels</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #14141a; color: #eee; margin: 0; padding: 24px 16px; }
+    main { max-width: 1000px; margin: 0 auto; }
+    h1 { margin: 0 0 16px; }
+    form { display: flex; gap: 8px; flex-wrap: wrap; }
+    input { flex: 1; min-width: 240px; padding: 10px 12px; font-size: 16px; border-radius: 6px; border: 1px solid #444; background: #1f1f28; color: #eee; }
+    button { padding: 10px 18px; font-size: 16px; border: 0; border-radius: 6px; background: #4f8cff; color: #fff; cursor: pointer; }
+    button.secondary { background: #2c2c3a; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .examples { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+    .examples button { font-size: 13px; padding: 5px 10px; background: #23232f; color: #bbb; }
+    #error { color: #ff6b6b; margin-top: 12px; }
+    #chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0 8px; }
+    .chip { background: #23232f; border-radius: 999px; padding: 4px 10px; font-size: 13px; color: #ccc; }
+    .tabs { display: flex; gap: 6px; margin: 12px 0 8px; }
+    .tabs button { background: #23232f; color: #bbb; padding: 6px 14px; font-size: 14px; }
+    .tabs button.active { background: #4f8cff; color: #fff; }
+    .panel { background: #1f1f28; border-radius: 8px; padding: 12px; overflow: auto; }
+    #game { width: 100%; max-width: 960px; aspect-ratio: 960 / 600; display: block; background: #000; image-rendering: pixelated; outline: none; }
+    #hint { color: #999; font-size: 13px; margin-top: 8px; }
+    #image { max-width: 100%; height: auto; display: block; }
+    #ascii { font-size: 14px; line-height: 1.1; white-space: pre; margin: 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Generador de niveles</h1>
+    <form id="form">
+      <input id="description" placeholder="Ej: mapa tipo Mario Bros con trampas, diseño pixelado y jefe final" required maxlength="500" />
+      <button id="submit" type="submit">Generar</button>
+    </form>
+    <div class="examples" id="examples"></div>
+    <div id="error"></div>
+    <div id="chips"></div>
+
+    <div id="result" hidden>
+      <div class="tabs">
+        <button type="button" data-tab="play" class="active">Jugar</button>
+        <button type="button" data-tab="image">Imagen</button>
+        <button type="button" data-tab="ascii">Mapa</button>
+        <button type="button" id="restart" class="secondary">Reiniciar (R)</button>
+        <button type="button" id="regen" class="secondary">Otra variante</button>
+      </div>
+      <div class="panel" data-panel="play">
+        <canvas id="game" tabindex="0"></canvas>
+        <div id="hint"></div>
+      </div>
+      <div class="panel" data-panel="image" hidden><img id="image" alt="Mapa del nivel" /></div>
+      <div class="panel" data-panel="ascii" hidden><pre id="ascii"></pre></div>
+    </div>
+  </main>
+
+  <script src="game.js"></script>
+  <script>
+    const EXAMPLES = [
+      "mapa tipo Mario Bros con trampas, diseño pixelado y jefe final",
+      "un laberinto de hielo con trampas",
+      "mazmorra con salas, 5 trampas, muchos enemigos y jefe final, dificil",
+      "plataformas en el espacio con monedas, dificil",
+    ];
+
+    const form = document.getElementById("form");
+    const input = document.getElementById("description");
+    const submit = document.getElementById("submit");
+    const errorEl = document.getElementById("error");
+    const canvas = document.getElementById("game");
+    let game = null;
+
+    for (const text of EXAMPLES) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = text;
+      button.addEventListener("click", () => { input.value = text; generate(); });
+      document.getElementById("examples").appendChild(button);
+    }
+
+    function showTab(name) {
+      document.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+      document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== name));
+      if (name === "play") canvas.focus();
+    }
+    document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+    document.getElementById("restart").addEventListener("click", () => { if (game) game.restart(); canvas.focus(); });
+    document.getElementById("regen").addEventListener("click", generate);
+
+    async function generate() {
+      errorEl.textContent = "";
+      submit.disabled = true;
+      try {
+        const res = await fetch("/api/levels/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: input.value }),
+        });
+        const level = await res.json();
+        if (!res.ok) throw new Error(level.error || "Error al generar el nivel");
+
+        const chips = document.getElementById("chips");
+        chips.replaceChildren(...level.interpretation.map((text) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = text;
+          return chip;
+        }));
+
+        document.getElementById("image").src = level.imageUrl;
+        document.getElementById("ascii").textContent = level.ascii;
+        document.getElementById("hint").textContent = level.layout === "platformer"
+          ? "Mover: flechas o A/D · Saltar: ↑ / W / Espacio (mantén para saltar más alto) · Pisa a los enemigos y al jefe desde arriba · R reinicia"
+          : "Mover: flechas o WASD · Atacar: caminar contra un enemigo o Espacio · Las trampas y enemigos quitan vida · R reinicia";
+
+        document.getElementById("result").hidden = false;
+        if (game) game.destroy();
+        game = window.LevelGame.create(canvas, level);
+        showTab("play");
+      } catch (err) {
+        errorEl.textContent = err.message;
+      } finally {
+        submit.disabled = false;
+      }
+    }
+
+    form.addEventListener("submit", (event) => { event.preventDefault(); generate(); });
+  </script>
+</body>
+</html>

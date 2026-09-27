@@ -1,0 +1,25 @@
+{
+  "name": "artificial-levels",
+  "version": "1.0.0",
+  "description": "API que genera niveles de juego proceduralmente a partir de una descripcion de texto",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "node --require ts-node/register/transpile-only --test src/generator/generator.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.2",
+    "@types/uuid": "^9.0.8",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.2"
+  }
+}
