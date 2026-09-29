@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
+import { requireAuth } from "../auth/auth";
 import { v4 as uuidv4 } from "uuid";
 import { buildLevel, toGeneratedLevel } from "../generator/levelBuilder";
 import { parseDescription } from "../generator/parser";
@@ -10,7 +12,16 @@ export const levelsRouter = Router();
 
 const MAX_DESCRIPTION_LENGTH = 500;
 
-levelsRouter.post("/generate", async (req, res) => {
+// Cada generacion puede llamar a la API de Claude: limita cuantas pide cada IP.
+const generateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: Number(process.env.GENERATE_LIMIT_PER_MINUTE) || 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Demasiadas generaciones seguidas. Espera un minuto e intenta de nuevo." },
+});
+
+levelsRouter.post("/generate", requireAuth, generateLimiter, async (req, res) => {
   const { description, seed } = req.body ?? {};
 
   if (typeof description !== "string" || description.trim().length === 0) {

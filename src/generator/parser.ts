@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { detectSize, parseDescriptionKeywords } from "./keywordParser";
+import { detectSize, normalize, parseDescriptionKeywords } from "./keywordParser";
 import { FeatureSpec, LevelSpec } from "./types";
 
 /**
@@ -32,6 +32,8 @@ const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
 const MAX_OUTPUT_TOKENS = 400;
 const MAX_COUNT = 30;
 const MAX_OBSTACLES = 8;
+const CACHE_SIZE = 500;
+const DAILY_AI_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 1000;
 
 const SYSTEM_PROMPT = `Interpretas descripciones de niveles de videojuego (en espanol o ingles) y las conviertes en una especificacion JSON. No generas el nivel; un generador procedural lo construye a partir de tu especificacion.
 
@@ -53,6 +55,36 @@ function getClient(): Anthropic | null {
   // Timeout corto y un solo reintento: si la API tarda, el respaldo local responde enseguida.
   client ??= new Anthropic({ timeout: 10_000, maxRetries: 1 });
   return client;
+}
+
+/** Misma descripcion -> mismo spec: se reutiliza sin volver a pagar la llamada. */
+const cache = new Map<string, AiSpec>();
+
+function cacheKey(description: string): string {
+  return normalize(description).replace(/\s+/g, " ").trim();
+}
+
+function remember(key: string, spec: AiSpec): void {
+  cache.delete(key);
+  cache.set(key, spec);
+  if (cache.size > CACHE_SIZE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
+
+/** Tope diario de llamadas a la API para acotar el gasto; al superarlo se usa el respaldo. */
+const usage = { day: "", calls: 0 };
+
+function takeDailySlot(): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  if (usage.day !== today) {
+    usage.day = today;
+    usage.calls = 0;
+  }
+  if (usage.calls >= DAILY_AI_LIMIT) return false;
+  usage.calls++;
+  return true;
 }
 
 const MULTIPLIERS: Record<AiSpec["traps"]["intensity"], number> = { few: 0.5, normal: 1.4, many: 1.9 };
@@ -93,6 +125,8 @@ async function requestAiSpec(anthropic: Anthropic, description: string): Promise
     output_config: { format: zodOutputFormat(AiSpecSchema) },
   });
 
+  console.log(`[parser] ${MODEL} tokens: entrada=${response.usage.input_tokens} salida=${response.usage.output_tokens}`);
+
   if (response.stop_reason !== "end_turn") {
     console.warn(`[parser] respuesta incompleta (stop_reason=${response.stop_reason}); usando respaldo`);
     return null;
@@ -116,12 +150,25 @@ export async function parseDescription(description: string, seed?: number): Prom
   const resolvedSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
   const fallback = (): LevelSpec => ({ ...parseDescriptionKeywords(description, resolvedSeed), source: "keywords" });
 
+  const key = cacheKey(description);
+  const cached = cache.get(key);
+  if (cached) {
+    remember(key, cached);
+    return aiSpecToLevelSpec(cached, description, resolvedSeed);
+  }
+
   const anthropic = getClient();
   if (!anthropic) return fallback();
+  if (!takeDailySlot()) {
+    console.warn(`[parser] tope diario de ${DAILY_AI_LIMIT} llamadas alcanzado; usando respaldo`);
+    return fallback();
+  }
 
   try {
     const ai = await requestAiSpec(anthropic, description);
-    return ai ? aiSpecToLevelSpec(ai, description, resolvedSeed) : fallback();
+    if (!ai) return fallback();
+    remember(key, ai);
+    return aiSpecToLevelSpec(ai, description, resolvedSeed);
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError) {
       console.error("[parser] ANTHROPIC_API_KEY invalida; usando respaldo");
