@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
+    "@libsql/client": "^0.18.0",
     "express": "^4.19.2",
     "express-rate-limit": "^8.7.0",
     "uuid": "^9.0.1",
@@ -22,5 +23,8 @@
     "@types/uuid": "^9.0.8",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.2"
+  },
+  "engines": {
+    "node": ">=20.12"
   }
 }

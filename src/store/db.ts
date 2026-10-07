@@ -1,17 +1,22 @@
 import fs from "fs";
 import path from "path";
-import { DatabaseSync } from "node:sqlite";
+import { createClient, InArgs, ResultSet } from "@libsql/client";
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "..", "data", "app.db");
+/**
+ * Con TURSO_DATABASE_URL usa una base SQLite en la nube (Turso), que sobrevive
+ * a los despliegues en hostings sin disco persistente. Sin ella, usa un archivo local.
+ */
+function databaseUrl(): string {
+  if (process.env.TURSO_DATABASE_URL) return process.env.TURSO_DATABASE_URL;
+  const file = process.env.DB_PATH || path.join(__dirname, "..", "..", "data", "app.db");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  return `file:${file}`;
+}
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const client = createClient({ url: databaseUrl(), authToken: process.env.TURSO_AUTH_TOKEN });
 
-export const db = new DatabaseSync(DB_PATH);
-
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
-
+/** Se resuelve cuando las tablas existen; server.ts lo espera antes de aceptar peticiones. */
+export const dbReady: Promise<void> = client.executeMultiple(`
   CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     email         TEXT NOT NULL UNIQUE,
@@ -26,3 +31,12 @@ db.exec(`
     expires_at INTEGER NOT NULL
   );
 `);
+
+export function run(sql: string, args: InArgs = []): Promise<ResultSet> {
+  return client.execute({ sql, args });
+}
+
+export async function first<T>(sql: string, args: InArgs = []): Promise<T | undefined> {
+  const result = await client.execute({ sql, args });
+  return result.rows[0] as T | undefined;
+}

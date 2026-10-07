@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { NextFunction, Request, Response } from "express";
-import { db } from "../store/db";
+import { first, run } from "../store/db";
 
 export interface PublicUser {
   id: number;
@@ -38,22 +38,23 @@ export function verifyPassword(password: string, stored: string): boolean {
 // En la base solo se guarda el hash del token: si alguien lee la base, no puede suplantar sesiones.
 const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
 
-export function createSession(userId: number): string {
+export async function createSession(userId: number): Promise<string> {
   const token = crypto.randomBytes(32).toString("base64url");
-  db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").run(hashToken(token), userId, Date.now() + SESSION_MS);
+  await run("DELETE FROM sessions WHERE expires_at < ?", [Date.now()]);
+  await run("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)", [hashToken(token), userId, Date.now() + SESSION_MS]);
   return token;
 }
 
-export function deleteSession(token: string): void {
-  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+export async function deleteSession(token: string): Promise<void> {
+  await run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(token)]);
 }
 
-function userForToken(token: string): PublicUser | undefined {
-  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
-  const row = db
-    .prepare("SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?")
-    .get(hashToken(token)) as PublicUser | undefined;
-  return row ? { id: row.id, email: row.email, name: row.name } : undefined;
+async function userForToken(token: string): Promise<PublicUser | undefined> {
+  const row = await first<PublicUser>(
+    "SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+    [hashToken(token), Date.now()],
+  );
+  return row ? { id: Number(row.id), email: row.email, name: row.name } : undefined;
 }
 
 export function readSessionToken(req: Request): string | undefined {
@@ -83,8 +84,13 @@ export function clearSessionCookie(res: Response): void {
 /** Adjunta req.user si la cookie de sesion es valida. No bloquea la peticion. */
 export function attachUser(req: Request, _res: Response, next: NextFunction): void {
   const token = readSessionToken(req);
-  if (token) req.user = userForToken(token);
-  next();
+  if (!token) return next();
+  userForToken(token)
+    .then((user) => {
+      req.user = user;
+      next();
+    })
+    .catch(next);
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
