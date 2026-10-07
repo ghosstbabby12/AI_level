@@ -21,7 +21,7 @@ function databaseUrl(): string {
 }
 
 const url = databaseUrl();
-const client = createClient({ url, authToken: env("TURSO_AUTH_TOKEN") });
+const client = createClient({ url, authToken: env("TURSO_AUTH_TOKEN")?.replace(/^Bearer\s+/i, "") });
 
 // Una sentencia por llamada: es la operacion mas basica del protocolo y la soportan todas las bases de Turso.
 const SCHEMA = [
@@ -46,6 +46,10 @@ async function migrate(): Promise<void> {
     // Muestra a que base se intento conectar (sin el token) para facilitar el diagnostico.
     const target = url.startsWith("file:") ? url : url.replace(/^(\w+:\/\/[^/?]+).*/, "$1");
     console.error(`No se pudieron crear las tablas en ${target}`);
+    const status = (error as { cause?: { status?: number } }).cause?.status;
+    if (status === 400 || status === 401) {
+      console.error("Turso rechazo el token: revisa TURSO_AUTH_TOKEN (debe ser un token de esta base de datos, completo y sin espacios).");
+    }
     throw error;
   }
 }
