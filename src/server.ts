@@ -14,7 +14,15 @@ const PORT = process.env.PORT || 3000;
 app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "..", "public")));
+// Solo en desarrollo: sirve el frontend desde su repo para tener un unico origen.
+if (process.env.FRONTEND_DIR) {
+  app.use(express.static(path.resolve(process.env.FRONTEND_DIR)));
+}
+
+app.get("/", (_req, res) => {
+  res.json({ name: "Artificial Levels API", health: "/api/health" });
+});
+
 app.use(attachUser);
 
 app.get("/api/health", (_req, res) => {
