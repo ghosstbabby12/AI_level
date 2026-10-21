@@ -34,7 +34,11 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, async (req, res) =>
     return res.status(400).json({ error: "El campo 'seed' debe ser un entero." });
   }
 
-  const spec = await parseDescription(description, seed);
+  const parsed = await parseDescription(description, seed);
+  if (!parsed.ok) {
+    return res.status(422).json({ error: parsed.reason, code: "invalid_description" });
+  }
+  const { spec } = parsed;
 
   try {
     const { grid, placed } = buildLevel(spec);

@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { detectSize, normalize, parseDescriptionKeywords } from "./keywordParser";
+import { detectSize, mentionsLevel, normalize, parseDescriptionKeywords } from "./keywordParser";
+import { basicRejection, NOT_A_LEVEL_REASON } from "./promptCheck";
 import { FeatureSpec, LevelSpec } from "./types";
 
 /**
@@ -15,6 +16,9 @@ const FeatureSchema = z.object({
 });
 
 const AiSpecSchema = z.object({
+  // Va primero para que el modelo decida la validez antes de rellenar el resto.
+  is_level_request: z.boolean(),
+  rejection_reason: z.string().nullable(),
   layout: z.enum(["maze", "dungeon", "platformer"]),
   theme: z.enum(["ice", "lava", "forest", "desert", "dungeon", "overworld", "water", "space"]),
   difficulty: z.enum(["easy", "normal", "hard"]),
@@ -28,6 +32,9 @@ const AiSpecSchema = z.object({
 
 export type AiSpec = z.infer<typeof AiSpecSchema>;
 
+/** O un spec listo para levelBuilder, o el motivo por el que se rechaza el texto. */
+export type ParseResult = { ok: true; spec: LevelSpec } | { ok: false; reason: string };
+
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
 const MAX_OUTPUT_TOKENS = 400;
 const MAX_COUNT = 30;
@@ -38,6 +45,8 @@ const DAILY_AI_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 1000;
 const SYSTEM_PROMPT = `Interpretas descripciones de niveles de videojuego (en espanol o ingles) y las conviertes en una especificacion JSON. No generas el nivel; un generador procedural lo construye a partir de tu especificacion.
 
 Campos:
+- is_level_request: decide esto primero. false si el texto no pide un nivel o escenario de juego: preguntas o datos ("cuando fue la guerra mundial"), conversacion ("hola, como estas"), tareas ajenas ("escribe un poema", "resuelve 2+2"), texto sin sentido o contenido ofensivo. Se generoso con lo creativo: cualquier lugar, ambiente o situacion jugable es valida aunque no use palabras tecnicas ("casa embrujada con fantasmas", "nivel en la segunda guerra mundial", "escapar de un volcan").
+- rejection_reason: si is_level_request es false, una frase corta dirigida al usuario, en su idioma, que explique por que no se puede generar y sugiera como pedir un nivel. Si es true, null. Cuando es false, rellena el resto de campos con valores por defecto.
 - layout: "platformer" para juegos de plataformas/side-scroller (Mario, Sonic, saltar), "maze" para laberintos, "dungeon" para mazmorras con salas (Zelda, roguelike). Sin pista clara: "maze".
 - theme: el ambiente visual. Sin pista: "overworld" para platformer, "dungeon" en otro caso.
 - difficulty: "normal" salvo que la descripcion sugiera otra cosa.
@@ -141,20 +150,32 @@ async function requestAiSpec(anthropic: Anthropic, description: string): Promise
   return result.data;
 }
 
+function fromAi(ai: AiSpec, description: string, seed: number): ParseResult {
+  if (!ai.is_level_request) return { ok: false, reason: ai.rejection_reason?.trim() || NOT_A_LEVEL_REASON };
+  return { ok: true, spec: aiSpecToLevelSpec(ai, description, seed) };
+}
+
 /**
  * Traduce una descripcion libre a un LevelSpec pidiendo a Claude una
- * especificacion estructurada. Nunca lanza: si no hay API key, la llamada falla
- * o el JSON no valida, usa el interprete por palabras clave.
+ * especificacion estructurada, o devuelve el motivo si el texto no pide un nivel.
+ * Nunca lanza: si no hay API key, la llamada falla o el JSON no valida, usa el
+ * interprete por palabras clave.
  */
-export async function parseDescription(description: string, seed?: number): Promise<LevelSpec> {
+export async function parseDescription(description: string, seed?: number): Promise<ParseResult> {
+  const basic = basicRejection(description);
+  if (basic) return { ok: false, reason: basic };
+
   const resolvedSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
-  const fallback = (): LevelSpec => ({ ...parseDescriptionKeywords(description, resolvedSeed), source: "keywords" });
+  const fallback = (): ParseResult =>
+    mentionsLevel(description)
+      ? { ok: true, spec: { ...parseDescriptionKeywords(description, resolvedSeed), source: "keywords" } }
+      : { ok: false, reason: NOT_A_LEVEL_REASON };
 
   const key = cacheKey(description);
   const cached = cache.get(key);
   if (cached) {
     remember(key, cached);
-    return aiSpecToLevelSpec(cached, description, resolvedSeed);
+    return fromAi(cached, description, resolvedSeed);
   }
 
   const anthropic = getClient();
@@ -168,7 +189,7 @@ export async function parseDescription(description: string, seed?: number): Prom
     const ai = await requestAiSpec(anthropic, description);
     if (!ai) return fallback();
     remember(key, ai);
-    return aiSpecToLevelSpec(ai, description, resolvedSeed);
+    return fromAi(ai, description, resolvedSeed);
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError) {
       console.error("[parser] ANTHROPIC_API_KEY invalida; usando respaldo");
