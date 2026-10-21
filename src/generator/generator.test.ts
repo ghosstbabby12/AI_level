@@ -67,3 +67,22 @@ test("las cantidades explicitas se respetan cuando hay espacio", () => {
   assert.equal(placed.traps, 5);
   assert.equal(placed.enemies, 7);
 });
+
+test("rechaza textos que no piden un nivel, con un motivo", async () => {
+  // Sin API key: se prueba la validacion local, sin llamadas de red.
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("./parser");
+
+  const rejected = ["cuando fue la guerra mundial", "hola, como estas?", "ab", "12345 !!!", "asdfg qwrty", "aaaaaaaaaa"];
+  for (const text of rejected) {
+    const result = await parseFull(text, 1);
+    assert.equal(result.ok, false, `debio rechazar: "${text}"`);
+    if (!result.ok) assert.ok(result.reason.length > 10, `sin motivo para: "${text}"`);
+  }
+
+  const accepted = ["un laberinto de hielo con trampas", "nivel ambientado en la segunda guerra mundial", "jefe final dificil", "desierto pequeño"];
+  for (const text of accepted) {
+    const result = await parseFull(text, 1);
+    assert.equal(result.ok, true, `debio aceptar: "${text}"`);
+  }
+});
