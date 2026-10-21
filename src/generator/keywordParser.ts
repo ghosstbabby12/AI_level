@@ -53,6 +53,19 @@ const EASY_STEMS = ["facil", "=easy", "sencill", "relajad", "tranquil", "princip
 const SMALL_STEMS = ["peque", "=small", "=mini", "=corto", "=corta", "=short", "=tiny"];
 const LARGE_STEMS = ["grande", "enorm", "=large", "=big", "gigant", "extens", "=largo", "=larga", "=long"];
 
+// Palabras que piden un nivel aunque no digan tipo ni tema ("un nivel dificil", "mapa con monedas").
+const GENERIC_LEVEL_STEMS = ["nivel", "level", "=mapa", "=mapas", "=map", "=maps", "escenario", "=juego", "=game", "=stage", "=fase", "=mundo", "=world", "videojuego"];
+
+/** true si el texto menciona algo que el generador sabe construir. Sirve para rechazar pedidos ajenos sin IA. */
+export function mentionsLevel(description: string): boolean {
+  const text = normalize(description);
+  const groups = [
+    GENERIC_LEVEL_STEMS, PLATFORMER_STEMS, MAZE_STEMS, DUNGEON_LAYOUT_STEMS, ...Object.values(THEME_STEMS),
+    TRAP_STEMS, ENEMY_STEMS, ITEM_STEMS, BOSS_STEMS, HARD_STEMS, EASY_STEMS,
+  ];
+  return groups.some((stems) => has(text, stems));
+}
+
 const NUMBER_WORDS: Record<string, number> = {
   un: 1, uno: 1, una: 1, one: 1, dos: 2, two: 2, tres: 3, three: 3, cuatro: 4, four: 4,
   cinco: 5, five: 5, seis: 6, six: 6, siete: 7, seven: 7, ocho: 8, eight: 8,
