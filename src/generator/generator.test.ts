@@ -86,3 +86,18 @@ test("rechaza textos que no piden un nivel, con un motivo", async () => {
     assert.equal(result.ok, true, `debio aceptar: "${text}"`);
   }
 });
+
+test("elige el mejor candidato y acompana el nivel con narrativa", async () => {
+  const { toGeneratedLevel } = await import("./levelBuilder");
+  for (const prompt of ["mazmorra con jefe final, dificil", "un laberinto de hielo con trampas", "plataformas en el espacio"]) {
+    const spec = parseDescription(prompt, 3);
+    const built = buildLevel(spec);
+    assert.ok(built.quality >= 0 && built.quality <= 100, `calidad fuera de rango: ${built.quality}`);
+
+    const level = toGeneratedLevel("id", spec, built, "");
+    assert.ok(level.narrative.title.length > 0, "sin titulo");
+    assert.ok(level.narrative.story.length > 0, "sin historia");
+    assert.equal(level.narrative.bossLine !== null, spec.boss, `frase del jefe incoherente en "${prompt}"`);
+    assert.deepEqual(toGeneratedLevel("id", spec, buildLevel(spec), "").narrative, level.narrative, "la narrativa no es deterministica");
+  }
+});
