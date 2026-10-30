@@ -28,6 +28,13 @@ export interface FeatureSpec {
   multiplier: number;
 }
 
+/** Titulo, ambientacion y frase del jefe que acompanan al nivel. */
+export interface Narrative {
+  title: string;
+  story: string;
+  bossLine: string | null;
+}
+
 export interface LevelSpec {
   description: string;
   seed: number;
@@ -44,6 +51,8 @@ export interface LevelSpec {
   obstacles?: string[];
   /** Quien interpreto la descripcion: Claude o el respaldo por palabras clave. */
   source?: "ai" | "keywords";
+  /** Escrita por la IA; sin ella, levelBuilder usa plantillas por tema. */
+  narrative?: Narrative;
 }
 
 export interface PlacedCounts {
@@ -75,5 +84,8 @@ export interface GeneratedLevel {
   ascii: string;
   palette: Palette;
   interpretation: string[];
+  narrative: Narrative;
+  /** Puntuacion de diseno (0-100) del candidato elegido entre varios. */
+  quality: number;
   createdAt: string;
 }

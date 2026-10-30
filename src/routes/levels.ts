@@ -41,9 +41,9 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, async (req, res) =>
   const { spec } = parsed;
 
   try {
-    const { grid, placed } = buildLevel(spec);
-    const ascii = renderAscii(grid, spec.theme, spec.layout);
-    const level = toGeneratedLevel(uuidv4(), spec, grid, placed, ascii);
+    const built = buildLevel(spec);
+    const ascii = renderAscii(built.grid, spec.theme, spec.layout);
+    const level = toGeneratedLevel(uuidv4(), spec, built, ascii);
     saveLevel(level);
 
     return res.status(201).json({
