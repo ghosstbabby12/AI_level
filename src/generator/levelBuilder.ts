@@ -3,10 +3,14 @@ import { buildPlatformer } from "./platformer";
 import { createRng } from "./rng";
 import { THEME_PALETTES } from "./themes";
 import { buildDungeonLayout, buildMazeLayout, populateTopDown } from "./topDown";
+import { templateNarrative } from "./narrative";
+import { scoreLevel } from "./quality";
 import { GeneratedLevel, LevelSpec, PlacedCounts } from "./types";
 import { validateLevel } from "./validator";
 
 const MAX_ATTEMPTS = 40;
+/** Candidatos validos que se comparan antes de elegir; mas = mejores niveles pero mas CPU. */
+const CANDIDATES = Number(process.env.LEVEL_CANDIDATES) || 8;
 
 const LAYOUT_LABEL = {
   platformer: "Plataformas de scroll lateral",
@@ -41,12 +45,26 @@ function attemptBuild(spec: LevelSpec, attempt: number): { grid: Grid; placed: P
   return validateLevel(layout.grid, spec) === null ? { grid: layout.grid, placed } : null;
 }
 
-export function buildLevel(spec: LevelSpec): { grid: Grid; placed: PlacedCounts } {
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+export interface BuiltLevel {
+  grid: Grid;
+  placed: PlacedCounts;
+  /** Puntuacion de diseno (0-100) del candidato elegido. */
+  quality: number;
+}
+
+/** Genera varios niveles validos con la misma semilla base y devuelve el mejor puntuado (deterministico). */
+export function buildLevel(spec: LevelSpec): BuiltLevel {
+  let best: BuiltLevel | null = null;
+  let valid = 0;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && valid < CANDIDATES; attempt++) {
     const result = attemptBuild(spec, attempt);
-    if (result) return result;
+    if (!result) continue;
+    valid++;
+    const quality = scoreLevel(result.grid, spec, result.placed);
+    if (!best || quality > best.quality) best = { ...result, quality };
   }
-  throw new Error("No se pudo generar un nivel valido con esa descripcion.");
+  if (!best) throw new Error("No se pudo generar un nivel valido con esa descripcion.");
+  return best;
 }
 
 export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts): string[] {
@@ -65,7 +83,8 @@ export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts): str
   ];
 }
 
-export function toGeneratedLevel(id: string, spec: LevelSpec, grid: Grid, placed: PlacedCounts, ascii: string): GeneratedLevel {
+export function toGeneratedLevel(id: string, spec: LevelSpec, built: BuiltLevel, ascii: string): GeneratedLevel {
+  const { grid, placed } = built;
   return {
     id,
     description: spec.description,
@@ -80,6 +99,8 @@ export function toGeneratedLevel(id: string, spec: LevelSpec, grid: Grid, placed
     ascii,
     palette: THEME_PALETTES[spec.theme],
     interpretation: describe(spec, grid, placed),
+    narrative: spec.narrative ?? templateNarrative(spec),
+    quality: built.quality,
     createdAt: new Date().toISOString(),
   };
 }
