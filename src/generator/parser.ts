@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { detectSize, mentionsLevel, normalize, parseDescriptionKeywords } from "./keywordParser";
 import { basicRejection, NOT_A_LEVEL_REASON } from "./promptCheck";
-import { FeatureSpec, LevelSpec } from "./types";
+import { BOSS_KINDS, ENEMY_KINDS, FeatureSpec, ITEM_KINDS, LevelSpec } from "./types";
 
 /**
  * Lo que decide el modelo: solo la intencion del usuario, nunca la cuadricula.
@@ -28,6 +28,9 @@ const AiSpecSchema = z.object({
   enemies: FeatureSchema,
   items: FeatureSchema,
   obstacles: z.array(z.string()),
+  item_kind: z.enum(ITEM_KINDS),
+  enemy_kind: z.enum(ENEMY_KINDS),
+  boss_kind: z.enum(BOSS_KINDS),
   title: z.string(),
   story: z.string(),
   boss_line: z.string().nullable(),
@@ -56,6 +59,9 @@ Campos:
 - size: "small", "normal" o "large" segun lo que pida el usuario; "normal" si no dice nada.
 - boss: true solo si se menciona un jefe final, boss, dragon o similar.
 - traps / enemies / items: enabled=false si el usuario los excluye ("sin trampas"). count = numero explicito pedido ("5 enemigos" -> 5), si no null. intensity: "many" si pide muchos, "few" si pide pocos, si no "normal". Por defecto trampas y enemigos estan habilitados; items solo en platformer o si se mencionan (llaves, monedas, tesoros...).
+- item_kind: como se ven los objetos que recoge el jugador: "coin" (monedas, tesoro), "gem" (gemas, cristales), "key" (llaves), "weapon" (armas, espadas), "potion" (pociones), "star" (estrellas), "fruit" (frutas). Si el usuario pide recolectar algo, activa items y elige el tipo mas cercano.
+- enemy_kind: aspecto de los enemigos: "blob" (criatura generica), "slime", "ghost" (fantasmas, espiritus), "skeleton" (esqueletos, no muertos, zombis), "robot" (robots, maquinas, aliens), "bat" (murcielagos, criaturas voladoras), "mixed" (si pide enemigos variados, aleatorios, random o de muchos tipos). Elige el que mejor encaje con el tema aunque el usuario no lo diga (mansion embrujada -> ghost, nave espacial -> robot, cripta -> skeleton).
+- boss_kind: aspecto del jefe: "monster" (generico), "dragon", "vampire" (vampiros, nigromantes, reyes oscuros), "mech" (robot gigante). Elige el mas cercano aunque boss sea false.
 - title: nombre evocador del nivel, 2 a 5 palabras, en el idioma del usuario (ej. "Cavernas de Escarcha").
 - story: una o dos frases (maximo 180 caracteres) en segunda persona que ambienten el nivel y digan el objetivo, fieles a lo que pidio el usuario (ej. "El hielo cruje bajo tus pies. Encuentra la salida antes de que el frio te alcance.").
 - boss_line: si boss es true, la frase amenazante que dice el jefe al encontrarlo (maximo 90 caracteres); si no, null.
@@ -127,6 +133,7 @@ export function aiSpecToLevelSpec(ai: AiSpec, description: string, seed: number)
     enemies: toFeature(ai.enemies),
     items: toFeature(ai.items),
     obstacles: ai.obstacles.slice(0, MAX_OBSTACLES),
+    kinds: { item: ai.item_kind, enemy: ai.enemy_kind, boss: ai.boss_kind },
     source: "ai",
     narrative: {
       title: ai.title.trim().slice(0, 60),

@@ -1,4 +1,4 @@
-import { Difficulty, FeatureSpec, Layout, LevelSpec, Theme } from "./types";
+import { BossKind, Difficulty, EnemyKind, FeatureSpec, ItemKind, Kinds, Layout, LevelSpec, Theme } from "./types";
 
 export function normalize(text: string): string {
   return text
@@ -45,7 +45,7 @@ const DUNGEON_LAYOUT_STEMS = ["mazmorr", "dungeon", "habitacion", "=room", "=roo
 
 const TRAP_STEMS = ["trampa", "trap", "pincho", "spike", "peligro", "hazard"];
 const ENEMY_STEMS = ["enemig", "enemy", "enemies", "monstruo", "monster", "guardia", "goomba", "koopa", "criatura", "esqueleto", "zombie", "slime", "bicho"];
-const ITEM_STEMS = ["llave", "=key", "=keys", "tesoro", "treasure", "moneda", "=coin", "=coins", "gema", "=gem", "=gems", "=item", "=items", "objeto", "estrella", "=star", "=stars"];
+const ITEM_STEMS = ["arma", "espada", "hacha", "=arco", "weapon", "sword", "pocion", "potion", "fruta", "fruit", "manzana", "cristal", "llave", "=key", "=keys", "tesoro", "treasure", "moneda", "=coin", "=coins", "gema", "=gem", "=gems", "=item", "=items", "objeto", "estrella", "=star", "=stars"];
 const BOSS_STEMS = ["boss", "jefe", "bowser", "dragon", "guardian"];
 
 const HARD_STEMS = ["dificil", "=hard", "extrem", "brutal", "imposible", "letal", "infernal"];
@@ -64,6 +64,48 @@ export function mentionsLevel(description: string): boolean {
     TRAP_STEMS, ENEMY_STEMS, ITEM_STEMS, BOSS_STEMS, HARD_STEMS, EASY_STEMS,
   ];
   return groups.some((stems) => has(text, stems));
+}
+
+// Primer tipo mencionado gana; sin mencion, se usa el clasico.
+const ITEM_KIND_STEMS: [ItemKind, string[]][] = [
+  ["weapon", ["arma", "espada", "hacha", "=arco", "lanza", "weapon", "sword"]],
+  ["key", ["llave", "=key", "=keys"]],
+  ["gem", ["gema", "=gem", "=gems", "cristal", "diamante", "joya"]],
+  ["potion", ["pocion", "potion", "elixir"]],
+  ["star", ["estrella", "=star", "=stars"]],
+  ["fruit", ["fruta", "fruit", "manzana", "cereza"]],
+  ["coin", ["moneda", "=coin", "=coins", "tesoro", "treasure", "oro"]],
+];
+const ENEMY_KIND_STEMS: [EnemyKind, string[]][] = [
+  ["ghost", ["fantasma", "ghost", "espectro", "espiritu", "embrujad"]],
+  ["skeleton", ["esqueleto", "skeleton", "no muerto", "undead", "zombie"]],
+  ["robot", ["robot", "droide", "android", "maquina"]],
+  ["bat", ["murcielago", "=bat", "=bats"]],
+  ["slime", ["slime", "baba", "gelatin", "=limo"]],
+  ["mixed", ["random", "aleatori", "variad", "distintos", "diferentes", "mixed"]],
+];
+const BOSS_KIND_STEMS: [BossKind, string[]][] = [
+  ["dragon", ["dragon"]],
+  ["vampire", ["vampir", "dracula", "=conde"]],
+  ["mech", ["robot gigante", "=mecha", "=mech", "maquina"]],
+];
+
+function firstKind<K extends string>(text: string, table: [K, string[]][], fallback: K): K {
+  let best: { kind: K; at: number } | null = null;
+  for (const [kind, stems] of table) {
+    const at = text.search(new RegExp(pattern(stems)));
+    if (at !== -1 && (!best || at < best.at)) best = { kind, at };
+  }
+  return best ? best.kind : fallback;
+}
+
+export function detectKinds(description: string): Kinds {
+  const text = normalize(description);
+  return {
+    item: firstKind(text, ITEM_KIND_STEMS, "coin"),
+    enemy: firstKind(text, ENEMY_KIND_STEMS, "blob"),
+    boss: firstKind(text, BOSS_KIND_STEMS, "monster"),
+  };
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -206,5 +248,6 @@ export function parseDescriptionKeywords(description: string, seed?: number): Le
     traps: toFeature(readQuantity(text, TRAP_STEMS), true),
     enemies: toFeature(readQuantity(text, ENEMY_STEMS), true),
     items: toFeature(items, resolvedLayout === "platformer"),
+    kinds: detectKinds(description),
   };
 }

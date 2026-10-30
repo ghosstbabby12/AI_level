@@ -5,7 +5,7 @@ import { THEME_PALETTES } from "./themes";
 import { buildDungeonLayout, buildMazeLayout, populateTopDown } from "./topDown";
 import { templateNarrative } from "./narrative";
 import { scoreLevel } from "./quality";
-import { GeneratedLevel, LevelSpec, PlacedCounts } from "./types";
+import { BossKind, EnemyKind, GeneratedLevel, ItemKind, Kinds, LevelSpec, PlacedCounts } from "./types";
 import { validateLevel } from "./validator";
 
 const MAX_ATTEMPTS = 40;
@@ -30,6 +30,16 @@ const THEME_LABEL = {
 };
 
 const DIFFICULTY_LABEL = { easy: "Facil", normal: "Normal", hard: "Dificil" };
+
+const ITEM_LABEL: Record<ItemKind, string> = {
+  coin: "monedas", gem: "gemas", key: "llaves", weapon: "armas", potion: "pociones", star: "estrellas", fruit: "frutas",
+};
+const ENEMY_LABEL: Record<EnemyKind, string> = {
+  blob: "criaturas", slime: "slimes", ghost: "fantasmas", skeleton: "esqueletos", robot: "robots", bat: "murcielagos", mixed: "variados",
+};
+const BOSS_LABEL: Record<BossKind, string> = { monster: "monstruo", dragon: "dragon", vampire: "vampiro", mech: "robot gigante" };
+
+const DEFAULT_KINDS: Kinds = { item: "coin", enemy: "blob", boss: "monster" };
 
 function attemptBuild(spec: LevelSpec, attempt: number): { grid: Grid; placed: PlacedCounts } | null {
   const rng = createRng(spec.seed + attempt * 7919);
@@ -68,18 +78,19 @@ export function buildLevel(spec: LevelSpec): BuiltLevel {
 }
 
 export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts): string[] {
-  const feature = (label: string, enabled: boolean, count: number) =>
-    enabled ? `${label}: ${count}` : `${label}: ninguno`;
+  const kinds = spec.kinds ?? DEFAULT_KINDS;
+  const feature = (label: string, enabled: boolean, count: number, noun?: string) =>
+    enabled ? `${label}: ${count}${noun ? " " + noun : ""}` : `${label}: ninguno`;
 
   return [
     `Tipo: ${LAYOUT_LABEL[spec.layout]}`,
     `Tema: ${THEME_LABEL[spec.theme]}`,
     `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`,
     `Tamano: ${grid[0].length}x${grid.length}`,
-    `Jefe final: ${spec.boss ? "si" : "no"}`,
+    `Jefe final: ${spec.boss ? BOSS_LABEL[kinds.boss] : "no"}`,
     feature("Trampas", spec.traps.enabled, placed.traps),
-    feature("Enemigos", spec.enemies.enabled, placed.enemies),
-    feature("Objetos", spec.items.enabled, placed.items),
+    feature("Enemigos", spec.enemies.enabled, placed.enemies, ENEMY_LABEL[kinds.enemy]),
+    feature("Objetos", spec.items.enabled, placed.items, ITEM_LABEL[kinds.item]),
   ];
 }
 
@@ -100,6 +111,7 @@ export function toGeneratedLevel(id: string, spec: LevelSpec, built: BuiltLevel,
     palette: THEME_PALETTES[spec.theme],
     interpretation: describe(spec, grid, placed),
     narrative: spec.narrative ?? templateNarrative(spec),
+    kinds: spec.kinds ?? DEFAULT_KINDS,
     quality: built.quality,
     createdAt: new Date().toISOString(),
   };
