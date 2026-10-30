@@ -101,3 +101,14 @@ test("elige el mejor candidato y acompana el nivel con narrativa", async () => {
     assert.deepEqual(toGeneratedLevel("id", spec, buildLevel(spec), "").narrative, level.narrative, "la narrativa no es deterministica");
   }
 });
+
+test("detecta el aspecto de objetos, enemigos y jefe", async () => {
+  const { detectKinds } = await import("./keywordParser");
+  assert.deepEqual(detectKinds("juego de recoleccion de armas y enemigos random"), { item: "weapon", enemy: "mixed", boss: "monster" });
+  assert.deepEqual(detectKinds("mansion embrujada con fantasmas y un vampiro como jefe"), { item: "coin", enemy: "ghost", boss: "vampire" });
+  assert.deepEqual(detectKinds("cripta de esqueletos con llaves y un dragon"), { item: "key", enemy: "skeleton", boss: "dragon" });
+  assert.deepEqual(detectKinds("estacion espacial con robots y pociones"), { item: "potion", enemy: "robot", boss: "monster" });
+
+  const spec = parseDescription("juego de recoleccion de armas y enemigos", 1);
+  assert.equal(spec.items.enabled, true, "pedir armas debe activar los objetos");
+});
