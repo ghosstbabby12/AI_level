@@ -112,3 +112,76 @@ test("detecta el aspecto de objetos, enemigos y jefe", async () => {
   const spec = parseDescription("juego de recoleccion de armas y enemigos", 1);
   assert.equal(spec.items.enabled, true, "pedir armas debe activar los objetos");
 });
+
+test("genera tableros arcade simetricos, conectados y sin callejones", () => {
+  for (const prompt of ["nivel tipo pacman", "arcade grande con jefe final, dificil", "comecocos con fantasmas pequeño"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "arcade", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      const width = grid[0].length;
+
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.ok(placed.items > 50, `${label}: pocos puntos (${placed.items})`);
+      assert.equal(countCells(grid, "power"), 4, label);
+      assert.equal(countCells(grid, "trap"), 0, label);
+      assert.equal(countCells(grid, "exit"), 0, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+      assert.ok(placed.enemies >= 3, label);
+
+      const open = (x: number, y: number) => grid[y]?.[x] !== undefined && grid[y][x] !== "wall";
+      for (let y = 1; y < grid.length - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          assert.equal(open(x, y), open(width - 1 - x, y), `${label}: asimetrico en ${x},${y}`);
+          if (!open(x, y)) continue;
+          const exits = [open(x + 1, y), open(x - 1, y), open(x, y + 1), open(x, y - 1)].filter(Boolean).length;
+          assert.ok(exits >= 2, `${label}: callejon en ${x},${y}`);
+        }
+      }
+      const tunnels = grid.filter((row) => row[0] !== "wall" && row[width - 1] !== "wall");
+      assert.equal(tunnels.length, 1, `${label}: debe haber un tunel`);
+    }
+  }
+});
+
+test("genera cuevas organicas validas", () => {
+  for (const prompt of ["cuevas de hielo con trampas", "mina abandonada con jefe final, dificil", "caverna pequeña con monedas"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "cave", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.equal(countCells(grid, "trap"), placed.traps, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+    }
+  }
+});
+
+test("tiro al blanco genera una galeria y respeta lo pedido", () => {
+  for (const prompt of ["tiro al blanco", "galeria de tiro dificil con jefe final", "disparar a dianas en el espacio"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "shooter", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.ok(placed.items >= 10, `${label}: pocas dianas (${placed.items})`);
+      assert.equal(countCells(grid, "item"), placed.items, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+    }
+  }
+  const counted = buildLevel(parseDescription("tiro al blanco con 12 dianas, sin bombas", 1));
+  assert.equal(counted.placed.items, 12);
+});
+
+test("un genero que no existe se rechaza en vez de sustituirse", async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("./parser");
+  for (const text of ["carreras de autos", "partida de ajedrez"]) {
+    assert.equal((await parseFull(text, 1)).ok, false, text);
+  }
+  const accepted = await parseFull("tiro al blanco", 1);
+  assert.ok(accepted.ok && accepted.spec.layout === "shooter");
+});
