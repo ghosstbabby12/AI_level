@@ -1,5 +1,5 @@
 import { bfsDistances, countCells, findCell, Grid, Point } from "./grid";
-import { CellType, LevelSpec } from "./types";
+import { CellType, Layout, LevelSpec } from "./types";
 
 const isSolid = (cell: CellType) => cell === "wall";
 
@@ -82,12 +82,35 @@ function validateArcade(grid: Grid, spec: LevelSpec): string | null {
   return unreachable ? "hay puntos inalcanzables" : null;
 }
 
-export function validateLevel(grid: Grid, spec: LevelSpec): string | null {
-  if (spec.layout === "arcade") return validateArcade(grid, spec);
-  if (spec.layout === "shooter") {
+function validateReachable(grid: Grid, spec: LevelSpec): string | null {
+  const start = findCell(grid, "start");
+  if (!start || countCells(grid, "start") !== 1) return "debe haber exactamente un inicio";
+  if (countCells(grid, "boss") !== (spec.boss ? 1 : 0)) return "cantidad de jefes incorrecta";
+  const distances = bfsDistances(grid, start);
+  const unreachable = grid.some((row, y) => row.some((cell, x) => cell !== "wall" && distances[y][x] === -1));
+  return unreachable ? "hay zonas inalcanzables" : null;
+}
+
+/** Modos sin salida: cada uno comprueba lo que necesita para poder ganarse. */
+const CUSTOM: Partial<Record<Layout, (grid: Grid, spec: LevelSpec) => string | null>> = {
+  arcade: validateArcade,
+  shooter: (grid, spec) => {
     if (countCells(grid, "boss") !== (spec.boss ? 1 : 0)) return "cantidad de jefes incorrecta";
     return countCells(grid, "item") > 0 ? null : "no hay dianas";
-  }
+  },
+  survival: (grid, spec) => validateReachable(grid, spec) ?? (countCells(grid, "enemy") >= 3 ? null : "faltan puntos de aparicion"),
+  racing: (grid) => {
+    if (!findCell(grid, "start")) return "falta la salida de la carrera";
+    return null;
+  },
+  invaders: (grid) => (countCells(grid, "enemy") > 0 ? null : "no hay invasores"),
+  breakout: (grid) => (countCells(grid, "start") === 1 && countCells(grid, "item") > 0 ? null : "no hay bloques"),
+  snake: (grid) => (validateReachable(grid, { boss: false } as LevelSpec) ?? (countCells(grid, "item") > 0 ? null : "no hay comida")),
+};
+
+export function validateLevel(grid: Grid, spec: LevelSpec): string | null {
+  const custom = CUSTOM[spec.layout];
+  if (custom) return custom(grid, spec);
 
   const start = findCell(grid, "start");
   const exit = findCell(grid, "exit");

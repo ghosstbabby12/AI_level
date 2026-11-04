@@ -1,5 +1,5 @@
-import { bfsDistances, findCell, Grid, neighbors4, Point } from "./grid";
-import { CellType, Difficulty, FeatureSpec, LevelSpec, PlacedCounts } from "./types";
+import { bfsDistances, countCells, findCell, Grid, neighbors4, Point } from "./grid";
+import { CellType, Difficulty, FeatureSpec, Layout, LevelSpec, PlacedCounts } from "./types";
 
 /**
  * Puntua de 0 a 100 que tan bien disenado esta un nivel ya valido. Sirve para
@@ -7,15 +7,26 @@ import { CellType, Difficulty, FeatureSpec, LevelSpec, PlacedCounts } from "./ty
  * (eso lo hace validator.ts), sino si es interesante y fiel a lo pedido.
  */
 export function scoreLevel(grid: Grid, spec: LevelSpec, placed: PlacedCounts): number {
-  const score =
-    spec.layout === "arcade"
-      ? scoreArcade(grid)
-      : spec.layout === "shooter"
-        ? scoreShooter(grid)
-        : spec.layout === "platformer"
-        ? scorePlatformer(grid, spec, placed)
-        : scoreTopDown(grid, spec, placed);
+  const scorer = CUSTOM_SCORES[spec.layout];
+  const score = scorer ? scorer(grid) : spec.layout === "platformer" ? scorePlatformer(grid, spec, placed) : scoreTopDown(grid, spec, placed);
   return Math.round(Math.max(0, Math.min(1, score)) * 100);
+}
+
+/** Reparto por toda la zona de juego: premia que no quede vacia ninguna parte. */
+function spread(grid: Grid, cells: CellType[]): number {
+  const cols = 4;
+  const rows = 3;
+  const filled = new Set<number>();
+  grid.forEach((row, y) => row.forEach((cell, x) => {
+    if (cells.includes(cell)) filled.add(Math.floor((y / grid.length) * rows) * cols + Math.floor((x / row.length) * cols));
+  }));
+  return filled.size / (cols * rows);
+}
+
+/** Pista: cuanto mas suelo ocupa respecto al mapa, mas larga y con mas curvas. */
+function scoreRacing(grid: Grid): number {
+  const open = grid.reduce((sum, row) => sum + row.filter((cell) => cell !== "wall").length, 0);
+  return Math.min(1, open / (grid.length * grid[0].length * 0.38));
 }
 
 const isHazard = (cell: CellType) => cell === "trap" || cell === "enemy";
@@ -129,6 +140,16 @@ function scoreShooter(grid: Grid): number {
   }));
   return filled.size / (cols * rows);
 }
+
+const CUSTOM_SCORES: Partial<Record<Layout, (grid: Grid) => number>> = {
+  arcade: scoreArcade,
+  shooter: scoreShooter,
+  racing: scoreRacing,
+  survival: (grid) => spread(grid, ["wall", "enemy"]),
+  snake: (grid) => spread(grid, ["item"]),
+  invaders: (grid) => Math.min(1, countCells(grid, "enemy") / 24),
+  breakout: (grid) => spread(grid, ["item", "enemy", "trap", "power"]),
+};
 
 const SAFE_START_COLUMNS = 6;
 const SEGMENTS = 6;

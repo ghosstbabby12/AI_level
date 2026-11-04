@@ -1,28 +1,25 @@
 import { buildArcade } from "./arcade";
+import { buildBreakout } from "./breakout";
 import { buildCaveLayout } from "./cave";
 import { Grid } from "./grid";
+import { buildInvaders } from "./invaders";
+import { MODES } from "./modes";
 import { buildPlatformer } from "./platformer";
-import { createRng } from "./rng";
+import { buildRacing } from "./racing";
+import { createRng, Rng } from "./rng";
 import { buildShooter } from "./shooter";
+import { buildSnake } from "./snake";
+import { buildSurvival } from "./survival";
 import { THEME_PALETTES } from "./themes";
-import { buildDungeonLayout, buildMazeLayout, populateTopDown } from "./topDown";
+import { buildDungeonLayout, buildMazeLayout, populateTopDown, TopDownLayout } from "./topDown";
 import { templateNarrative } from "./narrative";
 import { scoreLevel } from "./quality";
-import { BossKind, EnemyKind, GeneratedLevel, ItemKind, Kinds, LevelSpec, PlacedCounts } from "./types";
+import { BossKind, BuildResult, EnemyKind, GeneratedLevel, ItemKind, Kinds, Layout, LevelSpec, PlacedCounts } from "./types";
 import { validateLevel } from "./validator";
 
 const MAX_ATTEMPTS = 40;
 /** Candidatos validos que se comparan antes de elegir; mas = mejores niveles pero mas CPU. */
 const CANDIDATES = Number(process.env.LEVEL_CANDIDATES) || 8;
-
-const LAYOUT_LABEL = {
-  platformer: "Plataformas de scroll lateral",
-  maze: "Laberinto",
-  dungeon: "Mazmorra con salas y pasillos",
-  arcade: "Arcade de persecucion",
-  cave: "Cuevas organicas",
-  shooter: "Tiro al blanco",
-};
 
 const THEME_LABEL = {
   ice: "Hielo",
@@ -47,29 +44,32 @@ const BOSS_LABEL: Record<BossKind, string> = { monster: "monstruo", dragon: "dra
 
 const DEFAULT_KINDS: Kinds = { item: "coin", enemy: "blob", boss: "monster" };
 
-function attemptBuild(spec: LevelSpec, attempt: number): { grid: Grid; placed: PlacedCounts } | null {
-  const rng = createRng(spec.seed + attempt * 7919);
+/** Generador de cada modo; devuelve null si ese intento no salio bien y hay que reintentar. */
+const BUILDERS: Record<Layout, (spec: LevelSpec, rng: Rng) => BuildResult | null> = {
+  platformer: buildPlatformer,
+  arcade: buildArcade,
+  shooter: buildShooter,
+  survival: buildSurvival,
+  racing: buildRacing,
+  invaders: buildInvaders,
+  breakout: buildBreakout,
+  snake: buildSnake,
+  maze: (spec, rng) => buildTopDown(spec, rng, buildMazeLayout(spec, rng)),
+  cave: (spec, rng) => buildTopDown(spec, rng, buildCaveLayout(spec, rng)),
+  dungeon: (spec, rng) => buildTopDown(spec, rng, buildDungeonLayout(spec, rng)),
+};
 
-  if (spec.layout === "platformer") {
-    const { grid, placed } = buildPlatformer(spec, rng);
-    return validateLevel(grid, spec) === null ? { grid, placed } : null;
-  }
-
-  if (spec.layout === "arcade" || spec.layout === "shooter") {
-    const { grid, placed } = spec.layout === "arcade" ? buildArcade(spec, rng) : buildShooter(spec, rng);
-    return validateLevel(grid, spec) === null ? { grid, placed } : null;
-  }
-
-  const layout =
-    spec.layout === "maze" ? buildMazeLayout(spec, rng) : spec.layout === "cave" ? buildCaveLayout(spec, rng) : buildDungeonLayout(spec, rng);
+function buildTopDown(spec: LevelSpec, rng: Rng, layout: TopDownLayout | null): BuildResult | null {
   if (!layout) return null;
-  const placed = populateTopDown(layout, spec, rng);
-  return validateLevel(layout.grid, spec) === null ? { grid: layout.grid, placed } : null;
+  return { grid: layout.grid, placed: populateTopDown(layout, spec, rng) };
 }
 
-export interface BuiltLevel {
-  grid: Grid;
-  placed: PlacedCounts;
+function attemptBuild(spec: LevelSpec, attempt: number): BuildResult | null {
+  const result = BUILDERS[spec.layout](spec, createRng(spec.seed + attempt * 7919));
+  return result && validateLevel(result.grid, spec) === null ? result : null;
+}
+
+export interface BuiltLevel extends BuildResult {
   /** Puntuacion de diseno (0-100) del candidato elegido. */
   quality: number;
 }
@@ -89,25 +89,26 @@ export function buildLevel(spec: LevelSpec): BuiltLevel {
   return best;
 }
 
-export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts): string[] {
+export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts, params: Record<string, number> = {}): string[] {
   const kinds = spec.kinds ?? DEFAULT_KINDS;
   const feature = (label: string, enabled: boolean, count: number, noun?: string) =>
     enabled ? `${label}: ${count}${noun ? " " + noun : ""}` : `${label}: ninguno`;
 
-  if (spec.layout === "shooter") {
-    return [
-      `Tipo: ${LAYOUT_LABEL[spec.layout]}`,
-      `Tema: ${THEME_LABEL[spec.theme]}`,
-      `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`,
-      `Dianas: ${placed.items}`,
-      `Blancos moviles: ${placed.enemies}`,
-      `Bombas: ${placed.traps}`,
-      `Jefe final: ${spec.boss ? BOSS_LABEL[kinds.boss] : "no"}`,
-    ];
-  }
+  const head = [`Tipo: ${MODES[spec.layout].label}`, `Tema: ${THEME_LABEL[spec.theme]}`, `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`];
+  const bossChip = `Jefe final: ${spec.boss ? BOSS_LABEL[kinds.boss] : "no"}`;
+  const specific: Partial<Record<Layout, string[]>> = {
+    shooter: [`Dianas: ${placed.items}`, `Blancos moviles: ${placed.enemies}`, `Bombas: ${placed.traps}`, bossChip],
+    survival: [`Oleadas: ${params.waves}`, `Enemigos: ${ENEMY_LABEL[kinds.enemy]}`, `Curaciones: ${placed.items}`, `Trampas: ${placed.traps}`, bossChip],
+    racing: [`Vueltas: ${params.laps}`, `Rivales: ${placed.enemies}`, `Turbos: ${placed.items}`, `Manchas de aceite: ${placed.traps}`],
+    invaders: [`Invasores: ${placed.enemies} ${ENEMY_LABEL[kinds.enemy]}`, bossChip],
+    breakout: [`Bloques: ${placed.items}`, `Explosivos: ${placed.traps}`, bossChip],
+    snake: [`Por comer: ${placed.items} ${ITEM_LABEL[kinds.item]}`, `Trampas: ${placed.traps}`],
+  };
+  const chips = specific[spec.layout];
+  if (chips) return [...head, ...chips];
 
   return [
-    `Tipo: ${LAYOUT_LABEL[spec.layout]}`,
+    `Tipo: ${MODES[spec.layout].label}`,
     `Tema: ${THEME_LABEL[spec.theme]}`,
     `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`,
     `Tamano: ${grid[0].length}x${grid.length}`,
@@ -135,9 +136,12 @@ export function toGeneratedLevel(id: string, spec: LevelSpec, built: BuiltLevel,
     grid,
     ascii,
     palette: THEME_PALETTES[spec.theme],
-    interpretation: describe(spec, grid, placed),
+    interpretation: describe(spec, grid, placed, built.params),
     narrative: spec.narrative ?? templateNarrative(spec),
     kinds: spec.kinds ?? DEFAULT_KINDS,
+    controls: MODES[spec.layout].controls,
+    route: built.route,
+    params: built.params,
     quality: built.quality,
     createdAt: new Date().toISOString(),
   };

@@ -1,3 +1,4 @@
+import { MODES } from "./modes";
 import { createRng } from "./rng";
 import { LevelSpec, Narrative, Theme } from "./types";
 
@@ -27,15 +28,6 @@ const SETTINGS: Record<Theme, string> = {
   space: "Las alarmas de la estación no dejan de sonar.",
 };
 
-const GOALS = {
-  platformer: "Avanza, salta y llega a la meta.",
-  maze: "Encuentra la salida antes de perderte.",
-  dungeon: "Recorre las salas y escapa con vida.",
-  arcade: "Recógelo todo sin dejarte atrapar.",
-  cave: "Abre camino por las cuevas hasta la salida.",
-  shooter: "Apunta bien, acierta las dianas y no toques las bombas.",
-};
-
 const BOSS_LINES = [
   "Nadie ha salido de aquí con vida.",
   "Has llegado lejos… pero aquí termina tu viaje.",
@@ -47,7 +39,7 @@ export function templateNarrative(spec: LevelSpec): Narrative {
   const rng = createRng(spec.seed ^ 0x5eed);
   return {
     title: rng.pick(TITLES[spec.theme]),
-    story: `${SETTINGS[spec.theme]} ${GOALS[spec.layout]}`,
+    story: `${SETTINGS[spec.theme]} ${MODES[spec.layout].goal}`,
     bossLine: spec.boss ? rng.pick(BOSS_LINES) : null,
   };
 }

@@ -1,3 +1,4 @@
+import { MODES, MODE_PRIORITY } from "./modes";
 import { BossKind, Difficulty, EnemyKind, FeatureSpec, ItemKind, Kinds, Layout, LevelSpec, Theme } from "./types";
 
 export function normalize(text: string): string {
@@ -39,12 +40,6 @@ const THEME_STEMS: Record<Theme, string[]> = {
   space: ["espacio", "=space", "galax", "estelar", "=nave", "=naves", "planeta", "planet", "cosmic", "asteroid", "neon"],
 };
 
-const SHOOTER_STEMS = ["tiro al blanco", "galeria de tiro", "=diana", "=dianas", "punteria", "shooter", "disparar", "=disparos", "=disparo", "=tiro", "=tiros", "francotirador", "sniper", "=target", "=targets", "arqueria"];
-const ARCADE_STEMS = ["pacman", "pac man", "pac-man", "=arcade", "comecocos", "come cocos", "persecucion", "=retro"];
-const CAVE_STEMS = ["cueva", "caverna", "=cave", "=caves", "cavern", "gruta", "=mina", "=minas", "=mine", "=mines", "subterrane", "underground", "fluid", "movimiento libre"];
-const PLATFORMER_STEMS = ["mario", "plataform", "platform", "sidescroll", "side scroll", "scroller", "lateral", "sonic", "saltar", "salto", "jump", "runner"];
-const MAZE_STEMS = ["laberint", "maze"];
-const DUNGEON_LAYOUT_STEMS = ["mazmorr", "dungeon", "habitacion", "=room", "=rooms", "=sala", "=salas", "zelda", "rogue", "calabozo", "cripta", "catacumb"];
 
 const TRAP_STEMS = ["bomba", "=bomb", "=bombs", "trampa", "trap", "pincho", "spike", "peligro", "hazard"];
 const ENEMY_STEMS = ["enemig", "enemy", "enemies", "monstruo", "monster", "guardia", "goomba", "koopa", "criatura", "esqueleto", "zombie", "slime", "bicho"];
@@ -63,7 +58,7 @@ const GENERIC_LEVEL_STEMS = ["nivel", "level", "=mapa", "=mapas", "=map", "=maps
 export function mentionsLevel(description: string): boolean {
   const text = normalize(description);
   const groups = [
-    GENERIC_LEVEL_STEMS, SHOOTER_STEMS, ARCADE_STEMS, CAVE_STEMS, PLATFORMER_STEMS, MAZE_STEMS, DUNGEON_LAYOUT_STEMS, ...Object.values(THEME_STEMS),
+    GENERIC_LEVEL_STEMS, ...MODE_PRIORITY.map((m) => MODES[m].stems), ...Object.values(THEME_STEMS),
     TRAP_STEMS, ENEMY_STEMS, ITEM_STEMS, BOSS_STEMS, HARD_STEMS, EASY_STEMS,
   ];
   return groups.some((stems) => has(text, stems));
@@ -102,6 +97,14 @@ function firstKind<K extends string>(text: string, table: [K, string[]][], fallb
   return best ? best.kind : fallback;
 }
 
+const MAX_ROUNDS = 10;
+
+/** "5 vueltas", "3 oleadas"... */
+export function detectRounds(text: string): number | undefined {
+  const match = text.match(/\b(\d+)\s+(?:vueltas?|laps?|oleadas?|waves?|hordas?)\b/);
+  return match ? Math.min(MAX_ROUNDS, Math.max(1, parseInt(match[1], 10))) : undefined;
+}
+
 export function detectKinds(description: string): Kinds {
   const text = normalize(description);
   return {
@@ -111,9 +114,14 @@ export function detectKinds(description: string): Kinds {
   };
 }
 
-/** En arcade los perseguidores son fantasmas salvo que se pida otra cosa. */
+/** Cada modo tiene su aspecto por defecto para lo que no se haya pedido. */
 function withLayoutDefaults(kinds: Kinds, layout: Layout): Kinds {
-  return layout === "arcade" && kinds.enemy === "blob" ? { ...kinds, enemy: "ghost" } : kinds;
+  const defaults = MODES[layout].kinds ?? {};
+  return {
+    item: kinds.item === "coin" ? defaults.item ?? "coin" : kinds.item,
+    enemy: kinds.enemy === "blob" ? defaults.enemy ?? "blob" : kinds.enemy,
+    boss: kinds.boss === "monster" ? defaults.boss ?? "monster" : kinds.boss,
+  };
 }
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -168,36 +176,12 @@ function detectTheme(text: string, layout: Layout): Theme {
     }
   }
   if (best) return best;
-  return layout === "platformer" || layout === "shooter" ? "overworld" : layout === "arcade" ? "space" : "dungeon";
+  return MODES[layout].theme;
 }
 
 function detectLayout(text: string): Layout | null {
-  if (has(text, SHOOTER_STEMS)) return "shooter";
-  if (has(text, ARCADE_STEMS)) return "arcade";
-  if (has(text, PLATFORMER_STEMS)) return "platformer";
-  if (has(text, CAVE_STEMS)) return "cave";
-  if (has(text, MAZE_STEMS)) return "maze";
-  if (has(text, DUNGEON_LAYOUT_STEMS)) return "dungeon";
-  return null;
+  return MODE_PRIORITY.find((mode) => has(text, MODES[mode].stems)) ?? null;
 }
-
-const SIZES: Record<Layout, Record<"small" | "normal" | "large", [number, number]>> = {
-  maze: { small: [15, 15], normal: [25, 25], large: [39, 39] },
-  dungeon: { small: [31, 21], normal: [41, 27], large: [55, 35] },
-  platformer: { small: [70, 14], normal: [120, 16], large: [200, 18] },
-  arcade: { small: [21, 17], normal: [25, 19], large: [33, 23] },
-  cave: { small: [35, 23], normal: [51, 33], large: [71, 45] },
-  shooter: { small: [20, 13], normal: [24, 15], large: [30, 19] },
-};
-
-const LIMITS: Record<Layout, { w: [number, number]; h: [number, number] }> = {
-  maze: { w: [11, 51], h: [11, 51] },
-  dungeon: { w: [25, 61], h: [17, 41] },
-  platformer: { w: [40, 300], h: [12, 20] },
-  arcade: { w: [17, 41], h: [13, 27] },
-  cave: { w: [25, 91], h: [17, 61] },
-  shooter: { w: [16, 36], h: [11, 23] },
-};
 
 function clamp(value: number, [min, max]: [number, number]): number {
   return Math.min(max, Math.max(min, value));
@@ -215,18 +199,18 @@ export function detectSize(text: string, layout: Layout, hint?: SizeHint): { wid
     width = parseInt(explicit[1], 10);
     height = parseInt(explicit[2], 10);
   } else if (hint) {
-    [width, height] = SIZES[layout][hint];
+    [width, height] = MODES[layout].sizes[hint];
   } else if (has(text, SMALL_STEMS)) {
-    [width, height] = SIZES[layout].small;
+    [width, height] = MODES[layout].sizes.small;
   } else if (has(text, LARGE_STEMS)) {
-    [width, height] = SIZES[layout].large;
+    [width, height] = MODES[layout].sizes.large;
   } else {
-    [width, height] = SIZES[layout].normal;
+    [width, height] = MODES[layout].sizes.normal;
   }
 
-  width = clamp(width, LIMITS[layout].w);
-  height = clamp(height, LIMITS[layout].h);
-  if (layout === "maze" || layout === "arcade") {
+  width = clamp(width, MODES[layout].limits.w);
+  height = clamp(height, MODES[layout].limits.h);
+  if (MODES[layout].oddSize) {
     if (width % 2 === 0) width += 1;
     if (height % 2 === 0) height += 1;
   }
@@ -264,7 +248,8 @@ export function parseDescriptionKeywords(description: string, seed?: number): Le
     boss: boss.mentioned && !boss.negated,
     traps: toFeature(readQuantity(text, TRAP_STEMS), true),
     enemies: toFeature(readQuantity(text, ENEMY_STEMS), true),
-    items: toFeature(items, resolvedLayout === "platformer" || resolvedLayout === "arcade" || resolvedLayout === "shooter"),
+    items: toFeature(items, MODES[resolvedLayout].itemsByDefault ?? false),
     kinds: withLayoutDefaults(detectKinds(description), resolvedLayout),
+    rounds: detectRounds(text),
   };
 }

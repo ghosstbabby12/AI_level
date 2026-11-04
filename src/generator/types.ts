@@ -8,7 +8,7 @@ export type Theme =
   | "water"
   | "space";
 
-export const LAYOUTS = ["maze", "dungeon", "platformer", "arcade", "cave", "shooter"] as const;
+export const LAYOUTS = ["maze", "dungeon", "platformer", "arcade", "cave", "shooter", "survival", "racing", "invaders", "breakout", "snake"] as const;
 export type Layout = (typeof LAYOUTS)[number];
 
 export type Difficulty = "easy" | "normal" | "hard";
@@ -70,6 +70,18 @@ export interface LevelSpec {
   /** Escrita por la IA; sin ella, levelBuilder usa plantillas por tema. */
   narrative?: Narrative;
   kinds?: Kinds;
+  /** Vueltas u oleadas pedidas explicitamente. */
+  rounds?: number;
+}
+
+/** Lo que produce el generador de un modo. */
+export interface BuildResult {
+  grid: CellType[][];
+  placed: PlacedCounts;
+  /** Recorrido en orden, para los modos que lo necesitan (carreras). */
+  route?: Array<{ x: number; y: number }>;
+  /** Parametros de la partida: vueltas, oleadas... */
+  params?: Record<string, number>;
 }
 
 export interface PlacedCounts {
@@ -103,6 +115,10 @@ export interface GeneratedLevel {
   interpretation: string[];
   narrative: Narrative;
   kinds: Kinds;
+  /** Instrucciones para el jugador. */
+  controls: string;
+  route?: Array<{ x: number; y: number }>;
+  params?: Record<string, number>;
   /** Puntuacion de diseno (0-100) del candidato elegido entre varios. */
   quality: number;
   createdAt: string;
