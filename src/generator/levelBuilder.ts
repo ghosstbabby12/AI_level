@@ -1,6 +1,9 @@
+import { buildArcade } from "./arcade";
+import { buildCaveLayout } from "./cave";
 import { Grid } from "./grid";
 import { buildPlatformer } from "./platformer";
 import { createRng } from "./rng";
+import { buildShooter } from "./shooter";
 import { THEME_PALETTES } from "./themes";
 import { buildDungeonLayout, buildMazeLayout, populateTopDown } from "./topDown";
 import { templateNarrative } from "./narrative";
@@ -16,6 +19,9 @@ const LAYOUT_LABEL = {
   platformer: "Plataformas de scroll lateral",
   maze: "Laberinto",
   dungeon: "Mazmorra con salas y pasillos",
+  arcade: "Arcade de persecucion",
+  cave: "Cuevas organicas",
+  shooter: "Tiro al blanco",
 };
 
 const THEME_LABEL = {
@@ -49,7 +55,13 @@ function attemptBuild(spec: LevelSpec, attempt: number): { grid: Grid; placed: P
     return validateLevel(grid, spec) === null ? { grid, placed } : null;
   }
 
-  const layout = spec.layout === "maze" ? buildMazeLayout(spec, rng) : buildDungeonLayout(spec, rng);
+  if (spec.layout === "arcade" || spec.layout === "shooter") {
+    const { grid, placed } = spec.layout === "arcade" ? buildArcade(spec, rng) : buildShooter(spec, rng);
+    return validateLevel(grid, spec) === null ? { grid, placed } : null;
+  }
+
+  const layout =
+    spec.layout === "maze" ? buildMazeLayout(spec, rng) : spec.layout === "cave" ? buildCaveLayout(spec, rng) : buildDungeonLayout(spec, rng);
   if (!layout) return null;
   const placed = populateTopDown(layout, spec, rng);
   return validateLevel(layout.grid, spec) === null ? { grid: layout.grid, placed } : null;
@@ -82,15 +94,29 @@ export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts): str
   const feature = (label: string, enabled: boolean, count: number, noun?: string) =>
     enabled ? `${label}: ${count}${noun ? " " + noun : ""}` : `${label}: ninguno`;
 
+  if (spec.layout === "shooter") {
+    return [
+      `Tipo: ${LAYOUT_LABEL[spec.layout]}`,
+      `Tema: ${THEME_LABEL[spec.theme]}`,
+      `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`,
+      `Dianas: ${placed.items}`,
+      `Blancos moviles: ${placed.enemies}`,
+      `Bombas: ${placed.traps}`,
+      `Jefe final: ${spec.boss ? BOSS_LABEL[kinds.boss] : "no"}`,
+    ];
+  }
+
   return [
     `Tipo: ${LAYOUT_LABEL[spec.layout]}`,
     `Tema: ${THEME_LABEL[spec.theme]}`,
     `Dificultad: ${DIFFICULTY_LABEL[spec.difficulty]}`,
     `Tamano: ${grid[0].length}x${grid.length}`,
     `Jefe final: ${spec.boss ? BOSS_LABEL[kinds.boss] : "no"}`,
-    feature("Trampas", spec.traps.enabled, placed.traps),
+    feature("Trampas", spec.traps.enabled && spec.layout !== "arcade", placed.traps),
     feature("Enemigos", spec.enemies.enabled, placed.enemies, ENEMY_LABEL[kinds.enemy]),
-    feature("Objetos", spec.items.enabled, placed.items, ITEM_LABEL[kinds.item]),
+    spec.layout === "arcade"
+      ? feature("Por recoger", true, placed.items, kinds.item === "coin" ? "puntos" : ITEM_LABEL[kinds.item])
+      : feature("Objetos", spec.items.enabled, placed.items, ITEM_LABEL[kinds.item]),
   ];
 }
 

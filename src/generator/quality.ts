@@ -7,7 +7,14 @@ import { CellType, Difficulty, FeatureSpec, LevelSpec, PlacedCounts } from "./ty
  * (eso lo hace validator.ts), sino si es interesante y fiel a lo pedido.
  */
 export function scoreLevel(grid: Grid, spec: LevelSpec, placed: PlacedCounts): number {
-  const score = spec.layout === "platformer" ? scorePlatformer(grid, spec, placed) : scoreTopDown(grid, spec, placed);
+  const score =
+    spec.layout === "arcade"
+      ? scoreArcade(grid)
+      : spec.layout === "shooter"
+        ? scoreShooter(grid)
+        : spec.layout === "platformer"
+        ? scorePlatformer(grid, spec, placed)
+        : scoreTopDown(grid, spec, placed);
   return Math.round(Math.max(0, Math.min(1, score)) * 100);
 }
 
@@ -91,6 +98,36 @@ function scoreTopDown(grid: Grid, spec: LevelSpec, placed: PlacedCounts): number
   }
 
   return 0.35 * journey + 0.35 * engagement + 0.15 * guard + 0.15 * fidelity(spec, placed);
+}
+
+/** Fraccion de cruces que da margen para esquivar sin que el tablero parezca una plaza abierta. */
+const ARCADE_JUNCTION_TARGET = 0.3;
+
+function scoreArcade(grid: Grid): number {
+  let open = 0;
+  let junctions = 0;
+  let deadEnds = 0;
+  grid.forEach((row, y) => row.forEach((cell, x) => {
+    if (cell === "wall") return;
+    open++;
+    const exits = neighbors4({ x, y }).filter((n) => grid[n.y]?.[n.x] !== undefined && grid[n.y][n.x] !== "wall").length;
+    if (exits >= 3) junctions++;
+    if (exits === 1) deadEnds++;
+  }));
+  const balance = 1 - Math.min(1, Math.abs(junctions / open - ARCADE_JUNCTION_TARGET) / ARCADE_JUNCTION_TARGET);
+  return 0.7 * balance + 0.3 * (1 - Math.min(1, deadEnds / 4));
+}
+
+/** Blancos repartidos por toda la pantalla: obliga a mover la mira en vez de esperar en un rincon. */
+function scoreShooter(grid: Grid): number {
+  const cols = 4;
+  const rows = 3;
+  const filled = new Set<number>();
+  grid.forEach((row, y) => row.forEach((cell, x) => {
+    if (cell !== "item" && cell !== "enemy") return;
+    filled.add(Math.floor((y / grid.length) * rows) * cols + Math.floor((x / row.length) * cols));
+  }));
+  return filled.size / (cols * rows);
 }
 
 const SAFE_START_COLUMNS = 6;

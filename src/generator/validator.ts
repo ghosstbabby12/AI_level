@@ -68,7 +68,27 @@ function platformerSolvable(grid: Grid, start: Point, exit: Point): boolean {
   return false;
 }
 
+/** En arcade se gana recogiendo todo: no hay salida, pero todo debe ser alcanzable. */
+function validateArcade(grid: Grid, spec: LevelSpec): string | null {
+  const start = findCell(grid, "start");
+  if (!start || countCells(grid, "start") !== 1) return "debe haber exactamente un inicio";
+  if (countCells(grid, "boss") !== (spec.boss ? 1 : 0)) return "cantidad de jefes incorrecta";
+  if (countCells(grid, "item") + countCells(grid, "power") === 0) return "no hay nada que recoger";
+
+  const distances = bfsDistances(grid, start);
+  const unreachable = grid.some((row, y) =>
+    row.some((cell, x) => (cell === "item" || cell === "power" || cell === "enemy" || cell === "boss") && distances[y][x] === -1)
+  );
+  return unreachable ? "hay puntos inalcanzables" : null;
+}
+
 export function validateLevel(grid: Grid, spec: LevelSpec): string | null {
+  if (spec.layout === "arcade") return validateArcade(grid, spec);
+  if (spec.layout === "shooter") {
+    if (countCells(grid, "boss") !== (spec.boss ? 1 : 0)) return "cantidad de jefes incorrecta";
+    return countCells(grid, "item") > 0 ? null : "no hay dianas";
+  }
+
   const start = findCell(grid, "start");
   const exit = findCell(grid, "exit");
   if (!start || countCells(grid, "start") !== 1) return "debe haber exactamente un inicio";

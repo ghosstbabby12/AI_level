@@ -31,6 +31,9 @@ const GOALS = {
   platformer: "Avanza, salta y llega a la meta.",
   maze: "Encuentra la salida antes de perderte.",
   dungeon: "Recorre las salas y escapa con vida.",
+  arcade: "Recógelo todo sin dejarte atrapar.",
+  cave: "Abre camino por las cuevas hasta la salida.",
+  shooter: "Apunta bien, acierta las dianas y no toques las bombas.",
 };
 
 const BOSS_LINES = [

@@ -8,6 +8,7 @@ const CELL_FILL: Partial<Record<CellType, string>> = {
   enemy: "#dc2626",
   item: "#eab308",
   boss: "#7e22ce",
+  power: "#ec4899",
 };
 
 const CELL_LABEL: Partial<Record<CellType, string>> = {
@@ -17,6 +18,7 @@ const CELL_LABEL: Partial<Record<CellType, string>> = {
   enemy: "M",
   item: "$",
   boss: "B",
+  power: "P",
 };
 
 const TILE_SIZE = 20;
@@ -27,7 +29,7 @@ export function renderSvg(grid: CellType[][], theme: Theme, layout: Layout): str
   const width = grid[0].length;
   const svgWidth = width * TILE_SIZE;
   const svgHeight = height * TILE_SIZE;
-  const airColor = layout === "platformer" ? palette.sky[0] : palette.floor;
+  const airColor = layout === "platformer" || layout === "shooter" ? palette.sky[0] : palette.floor;
 
   const tiles: string[] = [];
   for (let y = 0; y < height; y++) {

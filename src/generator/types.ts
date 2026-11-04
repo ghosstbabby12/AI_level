@@ -8,7 +8,8 @@ export type Theme =
   | "water"
   | "space";
 
-export type Layout = "maze" | "dungeon" | "platformer";
+export const LAYOUTS = ["maze", "dungeon", "platformer", "arcade", "cave", "shooter"] as const;
+export type Layout = (typeof LAYOUTS)[number];
 
 export type Difficulty = "easy" | "normal" | "hard";
 
@@ -34,7 +35,8 @@ export type CellType =
   | "trap"
   | "enemy"
   | "item"
-  | "boss";
+  | "boss"
+  | "power";
 
 export interface FeatureSpec {
   enabled: boolean;

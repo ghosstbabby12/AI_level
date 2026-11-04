@@ -18,11 +18,12 @@ const SYMBOLS: Record<Exclude<CellType, "wall" | "floor">, string> = {
   enemy: "👹",
   item: "💎",
   boss: "🐲",
+  power: "⭐",
 };
 
 export function renderAscii(grid: CellType[][], theme: Theme, layout: Layout): string {
   const wall = THEME_WALL_EMOJI[theme];
-  const air = layout === "platformer" ? "🟦" : "⬜";
+  const air = layout === "platformer" || layout === "shooter" ? "🟦" : "⬜";
   return grid
     .map((row) => row.map((cell) => (cell === "wall" ? wall : cell === "floor" ? air : SYMBOLS[cell])).join(""))
     .join("\n");
