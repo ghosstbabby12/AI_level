@@ -179,9 +179,47 @@ test("tiro al blanco genera una galeria y respeta lo pedido", () => {
 test("un genero que no existe se rechaza en vez de sustituirse", async () => {
   delete process.env.ANTHROPIC_API_KEY;
   const { parseDescription: parseFull } = await import("./parser");
-  for (const text of ["carreras de autos", "partida de ajedrez"]) {
+  for (const text of ["partida de ajedrez", "sopa de letras"]) {
     assert.equal((await parseFull(text, 1)).ok, false, text);
   }
   const accepted = await parseFull("tiro al blanco", 1);
   assert.ok(accepted.ok && accepted.spec.layout === "shooter");
+});
+
+test("cada modo nuevo se genera, es valido y respeta lo pedido", () => {
+  const cases: Array<[string, string]> = [
+    ["survival", "supervivencia contra hordas de zombies"],
+    ["survival", "sobrevivir a 4 oleadas con jefe final, dificil"],
+    ["racing", "carreras de autos en el desierto"],
+    ["racing", "circuito de kart pequeño, facil"],
+    ["invaders", "matamarcianos dificil con jefe final"],
+    ["invaders", "batalla de naves"],
+    ["breakout", "rompe bloques en el espacio"],
+    ["breakout", "arkanoid dificil con jefe final"],
+    ["snake", "juego de la serpiente en el bosque"],
+    ["snake", "snake dificil grande"],
+  ];
+  for (const [layout, prompt] of cases) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(spec.layout, layout, label);
+      const built = buildLevel(spec);
+      assert.equal(validateLevel(built.grid, spec), null, label);
+      assert.ok(built.quality >= 0 && built.quality <= 100, label);
+    }
+  }
+  assert.equal(buildLevel(parseDescription("sobrevivir a 4 oleadas", 1)).params?.waves, 4);
+  assert.equal(buildLevel(parseDescription("carrera a 5 vueltas", 1)).params?.laps, 5);
+  assert.equal(buildLevel(parseDescription("snake con 7 manzanas", 1)).placed.items, 7);
+});
+
+test("el circuito de carreras es cerrado y transitable", () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const { grid, route } = buildLevel(parseDescription("carreras de autos", seed));
+    assert.ok(route && route.length > 60, `ruta corta en seed=${seed}`);
+    for (const p of route) assert.notEqual(grid[p.y][p.x], "wall", `ruta sobre muro seed=${seed}`);
+    const [first, last] = [route[0], route[route.length - 1]];
+    assert.ok(Math.abs(first.x - last.x) + Math.abs(first.y - last.y) <= 4, `circuito abierto seed=${seed}`);
+  }
 });
