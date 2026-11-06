@@ -4,10 +4,11 @@ import { BuildResult, Difficulty, LevelSpec } from "./types";
 
 const RIVALS: Record<Difficulty, number> = { easy: 2, normal: 3, hard: 4 };
 const OIL: Record<Difficulty, number> = { easy: 2, normal: 4, hard: 7 };
-const CONTROL_POINTS = 11;
-const TRACK_RADIUS = 2;
+const CONTROL_POINTS = 14;
+const TRACK_RADIUS = 3;
 const MAX_RIVALS = 6;
 const DEFAULT_LAPS = 3;
+const CLEAR_AROUND_START = 14;
 
 /** Interpola una curva cerrada que pasa por los puntos de control (Catmull-Rom). */
 function closedCurve(points: Array<{ x: number; y: number }>, samples: number): Array<{ x: number; y: number }> {
@@ -75,9 +76,10 @@ export function buildRacing(spec: LevelSpec, rng: Rng): BuildResult | null {
   // Turbos y aceite, repartidos a lo largo de la pista y lejos de la salida.
   const onTrack = (from: number, count: number, cell: "item" | "trap"): number => {
     let placed = 0;
-    const step = Math.floor(route.length / (count + 1));
-    for (let i = 1; i <= count; i++) {
-      const p = route[(from + i * step) % route.length];
+    const step = Math.floor((route.length - CLEAR_AROUND_START * 2) / Math.max(1, count));
+    for (let i = 0; i < count; i++) {
+      // La zona de la salida queda libre: nadie debe empezar sobre aceite.
+      const p = route[CLEAR_AROUND_START + (from + i * step) % (route.length - CLEAR_AROUND_START * 2)];
       const side = rng.int(-1, 1);
       const q = { x: p.x + side, y: p.y + rng.int(-1, 1) };
       if (grid[q.y]?.[q.x] === "floor") {
@@ -87,7 +89,7 @@ export function buildRacing(spec: LevelSpec, rng: Rng): BuildResult | null {
     }
     return placed;
   };
-  const items = spec.items.enabled || !spec.items.count ? onTrack(15, spec.items.count ?? 6, "item") : 0;
+  const items = spec.items.enabled || !spec.items.count ? onTrack(15, spec.items.count ?? 4, "item") : 0;
   const traps = spec.traps.enabled ? onTrack(30, spec.traps.count ?? OIL[spec.difficulty], "trap") : 0;
 
   return {
