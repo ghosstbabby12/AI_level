@@ -99,7 +99,7 @@ export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts, para
   const specific: Partial<Record<Layout, string[]>> = {
     shooter: [`Dianas: ${placed.items}`, `Blancos moviles: ${placed.enemies}`, `Bombas: ${placed.traps}`, bossChip],
     survival: [`Oleadas: ${params.waves}`, `Enemigos: ${ENEMY_LABEL[kinds.enemy]}`, `Curaciones: ${placed.items}`, `Trampas: ${placed.traps}`, bossChip],
-    racing: [`Vueltas: ${params.laps}`, `Rivales: ${placed.enemies}`, `Turbos: ${placed.items}`, `Manchas de aceite: ${placed.traps}`],
+    racing: [`Vueltas: ${params.laps}`, `Rivales: ${placed.enemies}`, `Filas de cajas: ${placed.items}`, `Manchas de aceite: ${placed.traps}`],
     invaders: [`Invasores: ${placed.enemies} ${ENEMY_LABEL[kinds.enemy]}`, bossChip],
     breakout: [`Bloques: ${placed.items}`, `Explosivos: ${placed.traps}`, bossChip],
     snake: [`Por comer: ${placed.items} ${ITEM_LABEL[kinds.item]}`, `Trampas: ${placed.traps}`],

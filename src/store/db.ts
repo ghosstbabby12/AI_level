@@ -37,6 +37,17 @@ const SCHEMA = [
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS levels (
+    id          TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    layout      TEXT NOT NULL,
+    theme       TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS levels_by_user ON levels (user_id, created_at)`,
 ];
 
 async function migrate(): Promise<void> {
