@@ -72,6 +72,10 @@ export interface LevelSpec {
   kinds?: Kinds;
   /** Vueltas u oleadas pedidas explicitamente. */
   rounds?: number;
+  /** Que tan bien encaja el pedido en un estilo existente. "custom": hay que escribir un juego nuevo. */
+  fit?: "exact" | "adapted" | "custom";
+  /** Si se adapto, como se interpreto (lo lee el usuario). */
+  adaptationNote?: string;
 }
 
 /** Lo que produce el generador de un modo. */
@@ -99,6 +103,20 @@ export interface Palette {
   sky: [string, string];
 }
 
+/** Juego escrito por la IA cuando ningun estilo sirve: un documento HTML que se ejecuta aislado. */
+export interface CustomGame {
+  id: string;
+  layout: "custom";
+  description: string;
+  theme: Theme;
+  difficulty: Difficulty;
+  narrative: Narrative;
+  interpretation: string[];
+  controls: string;
+  html: string;
+  createdAt: string;
+}
+
 export interface GeneratedLevel {
   id: string;
   description: string;
@@ -114,6 +132,7 @@ export interface GeneratedLevel {
   palette: Palette;
   interpretation: string[];
   narrative: Narrative;
+  adaptationNote?: string;
   kinds: Kinds;
   /** Instrucciones para el jugador. */
   controls: string;
