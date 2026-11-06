@@ -6,10 +6,12 @@ import { buildLevel, toGeneratedLevel } from "../generator/levelBuilder";
 import { parseDescription } from "../generator/parser";
 import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
-import { deleteLevel, encodeGrid, getLevel, listLevels, saveLevel } from "../store/levelStore";
+import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
+import { CustomGameError, writeCustomGame } from "../generator/customGame";
+import { getJob, startJob } from "../store/jobs";
 import { parseDescriptionKeywords } from "../generator/keywordParser";
 import { MODE_PRIORITY, MODES } from "../generator/modes";
-import { GeneratedLevel } from "../generator/types";
+import { CustomGame, GeneratedLevel, LevelSpec } from "../generator/types";
 
 export const levelsRouter = Router();
 
@@ -30,7 +32,52 @@ const safe = (handler: AsyncHandler) => (req: Request, res: Response, next: Next
   handler(req, res).catch(next);
 };
 
-const withUrls = (level: GeneratedLevel) => ({ ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag });
+const CUSTOM_LABEL = "Juego libre";
+const CUSTOM_TAG = "Libre";
+const withUrls = (level: StoredGame) =>
+  level.layout === "custom"
+    ? { ...level, tag: CUSTOM_TAG }
+    : { ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
+
+// Escribir un juego entero cuesta varias veces mas que interpretar una descripcion: tope propio.
+const CUSTOM_DAILY_LIMIT = Number(process.env.CUSTOM_DAILY_LIMIT) || 20;
+const customUsage = { day: "", count: 0 };
+
+function takeCustomSlot(): boolean {
+  if (process.env.CUSTOM_GAMES === "off") return false;
+  const today = new Date().toISOString().slice(0, 10);
+  if (customUsage.day !== today) {
+    customUsage.day = today;
+    customUsage.count = 0;
+  }
+  if (customUsage.count >= CUSTOM_DAILY_LIMIT) return false;
+  customUsage.count++;
+  return true;
+}
+
+async function createCustomGame(spec: LevelSpec, userId: number) {
+  const html = await writeCustomGame(spec);
+  const game: CustomGame = {
+    id: uuidv4(),
+    layout: "custom",
+    description: spec.description,
+    theme: spec.theme,
+    difficulty: spec.difficulty,
+    narrative: spec.narrative ?? { title: "Juego libre", story: spec.description, bossLine: null },
+    interpretation: [`Tipo: ${CUSTOM_LABEL}`, "Escrito a medida por la IA"],
+    controls: "Los controles se explican en la pantalla de inicio del juego.",
+    html,
+    createdAt: new Date().toISOString(),
+  };
+  let saved = true;
+  try {
+    await saveCustomGame(game, userId);
+  } catch (error) {
+    saved = false;
+    console.error("No se pudo guardar el juego libre:", error);
+  }
+  return { ...withUrls(game), saved };
+}
 
 levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, res) => {
   const { description, seed } = req.body ?? {};
@@ -50,6 +97,20 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     return res.status(422).json({ error: parsed.reason, code: "invalid_description" });
   }
   const { spec } = parsed;
+
+  // Ningun estilo sirve: la IA escribe el juego. Tarda minutos, asi que se responde
+  // enseguida con un trabajo que el cliente consulta hasta que termina.
+  if (spec.fit === "custom") {
+    if (!takeCustomSlot()) {
+      return res.status(429).json({ error: "Por hoy se alcanzó el límite de juegos creados a medida. Prueba con un estilo existente o vuelve mañana.", code: "custom_limit" });
+    }
+    const job = startJob(req.user!.id, () =>
+      createCustomGame(spec, req.user!.id).catch((error) => {
+        throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
+      }),
+    );
+    return res.status(202).json({ job: job.id, title: spec.narrative?.title, story: spec.narrative?.story });
+  }
 
   let level: GeneratedLevel;
   try {
@@ -87,9 +148,18 @@ levelsRouter.get("/examples", (_req, res) => {
   return res.json(examples);
 });
 
+levelsRouter.get("/jobs/:id", requireAuth, (req, res) => {
+  const job = getJob(req.params.id, req.user!.id);
+  if (!job) return res.status(404).json({ error: "Ese trabajo ya no existe. Vuelve a intentarlo." });
+  if (job.status === "failed") return res.status(500).json({ status: job.status, error: job.error });
+  return res.json({ status: job.status, level: job.result });
+});
+
 levelsRouter.get("/mine", requireAuth, safe(async (req, res) => {
   const levels = await listLevels(req.user!.id);
-  return res.json(levels.map((l) => ({ ...l, label: MODES[l.layout]?.label ?? l.layout, tag: MODES[l.layout]?.example.tag ?? "" })));
+  return res.json(levels.map((l) =>
+    l.layout === "custom" ? { ...l, label: CUSTOM_LABEL, tag: CUSTOM_TAG } : { ...l, label: MODES[l.layout].label, tag: MODES[l.layout].example.tag },
+  ));
 }));
 
 levelsRouter.get("/:id", safe(async (req, res) => {
@@ -105,7 +175,7 @@ levelsRouter.delete("/:id", requireAuth, safe(async (req, res) => {
 
 levelsRouter.get("/:id/image", safe(async (req, res) => {
   const level = await getLevel(req.params.id);
-  if (!level) return res.status(404).json({ error: "Nivel no encontrado." });
+  if (!level || level.layout === "custom") return res.status(404).json({ error: "Nivel no encontrado." });
   res.setHeader("Content-Type", "image/svg+xml");
   return res.send(renderSvg(level.grid, level.theme, level.layout));
 }));
