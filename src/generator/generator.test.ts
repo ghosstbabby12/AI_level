@@ -176,7 +176,7 @@ test("tiro al blanco genera una galeria y respeta lo pedido", () => {
   assert.equal(counted.placed.items, 12);
 });
 
-test("un genero que no existe se rechaza en vez de sustituirse", async () => {
+test("sin IA, un genero que no existe se rechaza en vez de sustituirse", async () => {
   delete process.env.ANTHROPIC_API_KEY;
   const { parseDescription: parseFull } = await import("./parser");
   for (const text of ["partida de ajedrez", "sopa de letras"]) {
@@ -265,4 +265,16 @@ test("los niveles se guardan, se listan por usuario y se borran", async () => {
   assert.equal(await store.deleteLevel("nivel-1", 1), true);
   assert.equal(await store.getLevel("nivel-1"), undefined);
   assert.deepEqual(store.decodeGrid(store.encodeGrid(level.grid)), level.grid);
+});
+
+test("los trabajos largos guardan su resultado y solo los ve su dueño", async () => {
+  const { startJob, getJob } = await import("../store/jobs");
+  const ok = startJob(1, async () => ({ listo: true }));
+  const bad = startJob(1, async () => { throw new Error("salió incompleto"); });
+  assert.equal(getJob(ok.id, 1)?.status, "pending");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(getJob(ok.id, 1)?.result, { listo: true });
+  assert.equal(getJob(bad.id, 1)?.status, "failed");
+  assert.equal(getJob(bad.id, 1)?.error, "salió incompleto");
+  assert.equal(getJob(ok.id, 2), undefined, "otro usuario no ve el trabajo");
 });
