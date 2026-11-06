@@ -223,3 +223,46 @@ test("el circuito de carreras es cerrado y transitable", () => {
     assert.ok(Math.abs(first.x - last.x) + Math.abs(first.y - last.y) <= 4, `circuito abierto seed=${seed}`);
   }
 });
+
+test("cada ejemplo de la portada genera el modo que anuncia", async () => {
+  const { MODES, MODE_PRIORITY } = await import("./modes");
+  for (const mode of MODE_PRIORITY) {
+    const spec = parseDescription(MODES[mode].example.text, 7);
+    assert.equal(spec.layout, mode, MODES[mode].example.text);
+    assert.equal(validateLevel(buildLevel(spec).grid, spec), null, mode);
+  }
+});
+
+test("los niveles se guardan, se listan por usuario y se borran", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "levels-"));
+  delete process.env.TURSO_DATABASE_URL;
+  process.env.DB_PATH = path.join(dir, "test.db");
+  const { dbReady, run } = await import("../store/db");
+  await dbReady;
+  const store = await import("../store/levelStore");
+  const { toGeneratedLevel } = await import("./levelBuilder");
+
+  await run("INSERT INTO users (id, email, name, password_hash, created_at) VALUES (1, 'a@a.co', 'A', 'x', 'now'), (2, 'b@b.co', 'B', 'x', 'now')");
+  const spec = parseDescription("carreras de autos", 3);
+  const level = toGeneratedLevel("nivel-1", spec, buildLevel(spec), "");
+  await store.saveLevel(level, 1);
+
+  // Se lee la fila guardada en la base (no la cache): la cuadricula y la ruta vuelven intactas.
+  const { first } = await import("../store/db");
+  const row = await first<{ data: string }>("SELECT data FROM levels WHERE id = ?", ["nivel-1"]);
+  const stored = JSON.parse(row!.data);
+  assert.deepEqual(store.decodeGrid(stored.rows), level.grid);
+  assert.deepEqual(stored.route, level.route);
+  assert.equal(stored.narrative.title, level.narrative.title);
+  assert.equal(stored.ascii, undefined, "el ASCII no se guarda");
+
+  assert.equal((await store.listLevels(1)).length, 1);
+  assert.equal((await store.listLevels(2)).length, 0);
+  assert.equal(await store.deleteLevel("nivel-1", 2), false, "otro usuario no puede borrarlo");
+  assert.equal(await store.deleteLevel("nivel-1", 1), true);
+  assert.equal(await store.getLevel("nivel-1"), undefined);
+  assert.deepEqual(store.decodeGrid(store.encodeGrid(level.grid)), level.grid);
+});
