@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { countCells } from "./grid";
 import { buildLevel } from "./levelBuilder";
 import { parseDescriptionKeywords as parseDescription } from "./keywordParser";
 import { validateLevel } from "./validator";
+
+// Base temporal para todo el archivo: los tests nunca tocan data/app.db ni Turso.
+delete process.env.TURSO_DATABASE_URL;
+process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "levels-")), "test.db");
 
 const PROMPTS = [
   "genera un mapa tipo Mario bros, esquivar trampas, diseño pixelado y un final con un final Boss",
@@ -234,12 +241,6 @@ test("cada ejemplo de la portada genera el modo que anuncia", async () => {
 });
 
 test("los niveles se guardan, se listan por usuario y se borran", async () => {
-  const fs = await import("node:fs");
-  const os = await import("node:os");
-  const path = await import("node:path");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "levels-"));
-  delete process.env.TURSO_DATABASE_URL;
-  process.env.DB_PATH = path.join(dir, "test.db");
   const { dbReady, run } = await import("../store/db");
   await dbReady;
   const store = await import("../store/levelStore");
@@ -267,14 +268,41 @@ test("los niveles se guardan, se listan por usuario y se borran", async () => {
   assert.deepEqual(store.decodeGrid(store.encodeGrid(level.grid)), level.grid);
 });
 
-test("los trabajos largos guardan su resultado y solo los ve su dueño", async () => {
-  const { startJob, getJob } = await import("../store/jobs");
-  const ok = startJob(1, async () => ({ listo: true }));
-  const bad = startJob(1, async () => { throw new Error("salió incompleto"); });
-  assert.equal(getJob(ok.id, 1)?.status, "pending");
-  await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual(getJob(ok.id, 1)?.result, { listo: true });
-  assert.equal(getJob(bad.id, 1)?.status, "failed");
-  assert.equal(getJob(bad.id, 1)?.error, "salió incompleto");
-  assert.equal(getJob(ok.id, 2), undefined, "otro usuario no ve el trabajo");
+test("los trabajos se guardan en la base, solo los ve su dueño y los huerfanos se marcan como error", async () => {
+  const { dbReady, run } = await import("../store/db");
+  await dbReady;
+  const jobs = await import("../store/jobs");
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (1, 'a@a.co', 'A', 'x', 'now'), (2, 'b@b.co', 'B', 'x', 'now')");
+
+  let finish!: (value: unknown) => void;
+  const ok = await jobs.startJob(1, () => new Promise((resolve) => (finish = resolve)));
+  const bad = await jobs.startJob(1, async () => { throw new Error("salió incompleto"); });
+
+  // Ya existe en la base en cuanto startJob devuelve, aunque el trabajo no haya terminado.
+  assert.ok(["pending", "running"].includes((await jobs.getJob(ok.id, 1))!.status));
+  assert.equal(await jobs.getJob(ok.id, 2), undefined, "otro usuario no ve el trabajo");
+
+  finish({ listo: true });
+  await new Promise((r) => setTimeout(r, 50));
+  const done = await jobs.getJob(ok.id, 1);
+  assert.equal(done?.status, "done");
+  assert.deepEqual(done?.result, { listo: true });
+  const failed = await jobs.getJob(bad.id, 1);
+  assert.equal(failed?.status, "error");
+  assert.equal(failed?.error, "salió incompleto");
+
+  // Simula un reinicio: un trabajo que quedo "running" sin proceso que lo termine.
+  const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+  const recent = new Date().toISOString();
+  await run("INSERT INTO jobs (id, user_id, status, created_at, updated_at) VALUES ('huerfano', 1, 'running', ?, ?), ('viejo', 1, 'done', ?, ?)", [recent, recent, old, old]);
+  assert.equal(await jobs.recoverInterruptedJobs(), 1);
+  const orphan = await jobs.getJob("huerfano", 1);
+  assert.equal(orphan?.status, "error");
+  assert.match(orphan?.error ?? "", /reinici/);
+  assert.equal((await jobs.getJob(ok.id, 1))?.status, "done", "los terminados no se tocan");
+
+  // La limpieza borra solo los de mas de 24 horas.
+  assert.equal(await jobs.deleteOldJobs(), 1);
+  assert.equal(await jobs.getJob("viejo", 1), undefined);
+  assert.ok(await jobs.getJob("huerfano", 1));
 });

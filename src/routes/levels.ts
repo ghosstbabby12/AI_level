@@ -104,7 +104,7 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     if (!takeCustomSlot()) {
       return res.status(429).json({ error: "Por hoy se alcanzó el límite de juegos creados a medida. Prueba con un estilo existente o vuelve mañana.", code: "custom_limit" });
     }
-    const job = startJob(req.user!.id, () =>
+    const job = await startJob(req.user!.id, () =>
       createCustomGame(spec, req.user!.id).catch((error) => {
         throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
       }),
@@ -148,12 +148,12 @@ levelsRouter.get("/examples", (_req, res) => {
   return res.json(examples);
 });
 
-levelsRouter.get("/jobs/:id", requireAuth, (req, res) => {
-  const job = getJob(req.params.id, req.user!.id);
+levelsRouter.get("/jobs/:id", requireAuth, safe(async (req, res) => {
+  const job = await getJob(req.params.id, req.user!.id);
   if (!job) return res.status(404).json({ error: "Ese trabajo ya no existe. Vuelve a intentarlo." });
-  if (job.status === "failed") return res.status(500).json({ status: job.status, error: job.error });
+  if (job.status === "error") return res.status(500).json({ status: job.status, error: job.error });
   return res.json({ status: job.status, level: job.result });
-});
+}));
 
 levelsRouter.get("/mine", requireAuth, safe(async (req, res) => {
   const levels = await listLevels(req.user!.id);

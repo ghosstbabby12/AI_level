@@ -5,6 +5,7 @@ import { attachUser } from "./auth/auth";
 import { authRouter } from "./routes/auth";
 import { levelsRouter } from "./routes/levels";
 import { dbReady } from "./store/db";
+import { startJobMaintenance } from "./store/jobs";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,7 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
 });
 
 dbReady
+  .then(() => startJobMaintenance())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Artificial Levels API escuchando en http://localhost:${PORT}`);

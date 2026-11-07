@@ -48,6 +48,17 @@ const SCHEMA = [
     created_at  TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS levels_by_user ON levels (user_id, created_at)`,
+  // Trabajos largos (juegos escritos por la IA). result guarda el JSON completo que recibe el cliente.
+  `CREATE TABLE IF NOT EXISTS jobs (
+    id            TEXT PRIMARY KEY,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'error')),
+    result        TEXT,
+    error_message TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS jobs_by_status ON jobs (status, created_at)`,
 ];
 
 async function migrate(): Promise<void> {
