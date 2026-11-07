@@ -8,6 +8,7 @@ import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
 import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
 import { CustomGameError, writeCustomGame } from "../generator/customGame";
+import { checkCustomQuota, formatWait } from "../store/customQuota";
 import { getJob, startJob } from "../store/jobs";
 import { parseDescriptionKeywords } from "../generator/keywordParser";
 import { MODE_PRIORITY, MODES } from "../generator/modes";
@@ -39,21 +40,6 @@ const withUrls = (level: StoredGame) =>
     ? { ...level, tag: CUSTOM_TAG }
     : { ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
 
-// Escribir un juego entero cuesta varias veces mas que interpretar una descripcion: tope propio.
-const CUSTOM_DAILY_LIMIT = Number(process.env.CUSTOM_DAILY_LIMIT) || 20;
-const customUsage = { day: "", count: 0 };
-
-function takeCustomSlot(): boolean {
-  if (process.env.CUSTOM_GAMES === "off") return false;
-  const today = new Date().toISOString().slice(0, 10);
-  if (customUsage.day !== today) {
-    customUsage.day = today;
-    customUsage.count = 0;
-  }
-  if (customUsage.count >= CUSTOM_DAILY_LIMIT) return false;
-  customUsage.count++;
-  return true;
-}
 
 async function createCustomGame(spec: LevelSpec, userId: number) {
   const html = await writeCustomGame(spec);
@@ -101,8 +87,19 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
   // Ningun estilo sirve: la IA escribe el juego. Tarda minutos, asi que se responde
   // enseguida con un trabajo que el cliente consulta hasta que termina.
   if (spec.fit === "custom") {
-    if (!takeCustomSlot()) {
-      return res.status(429).json({ error: "Por hoy se alcanzó el límite de juegos creados a medida. Prueba con un estilo existente o vuelve mañana.", code: "custom_limit" });
+    if (process.env.CUSTOM_GAMES === "off") {
+      return res.status(503).json({ error: "Los juegos creados a medida están desactivados por ahora. Prueba con un estilo existente.", code: "custom_disabled" });
+    }
+    const quota = await checkCustomQuota(req.user!.id);
+    if (!quota.allowed) {
+      const waitMs = quota.retryAt.getTime() - Date.now();
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil(waitMs / 1000))));
+      return res.status(429).json({
+        error: `Llegaste al límite de ${quota.limit} juegos creados a medida en 24 horas. Podrás crear otro en ${formatWait(waitMs)}. Mientras tanto, puedes generar niveles de los estilos existentes.`,
+        code: "custom_limit",
+        limit: quota.limit,
+        retryAt: quota.retryAt.toISOString(),
+      });
     }
     const job = await startJob(req.user!.id, () =>
       createCustomGame(spec, req.user!.id).catch((error) => {

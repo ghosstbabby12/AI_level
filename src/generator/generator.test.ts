@@ -306,3 +306,36 @@ test("los trabajos se guardan en la base, solo los ve su dueño y los huerfanos 
   assert.equal(await jobs.getJob("viejo", 1), undefined);
   assert.ok(await jobs.getJob("huerfano", 1));
 });
+
+test("el tope de juegos a medida es por usuario, cuenta los que estan en proceso y dice cuando se libera", async () => {
+  const { dbReady, run } = await import("../store/db");
+  await dbReady;
+  const { checkCustomQuota, formatWait, CUSTOM_GAMES_PER_DAY } = await import("../store/customQuota");
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (3, 'c@c.co', 'C', 'x', 'now'), (4, 'd@d.co', 'D', 'x', 'now')");
+
+  const now = new Date("2026-11-07T12:00:00.000Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 60 * 60_000).toISOString();
+  const addLevel = (id: string, userId: number, layout: string, createdAt: string) =>
+    run("INSERT INTO levels (id, user_id, description, title, layout, theme, data, created_at) VALUES (?, ?, 'x', 'x', ?, 'space', '{}', ?)", [id, userId, layout, createdAt]);
+
+  assert.equal(CUSTOM_GAMES_PER_DAY, 5);
+  // Fuera de la ventana, de otro estilo o de otro usuario: no cuentan.
+  await addLevel("q-viejo", 3, "custom", hoursAgo(30));
+  await addLevel("q-normal", 3, "maze", hoursAgo(1));
+  await addLevel("q-otro", 4, "custom", hoursAgo(1));
+  for (const [i, h] of [20, 10, 5, 1].entries()) await addLevel(`q-${i}`, 3, "custom", hoursAgo(h));
+  assert.deepEqual(await checkCustomQuota(3, now), { allowed: true, used: 4, limit: 5 });
+
+  // Un quinto en proceso agota el cupo; se libera cuando el mas antiguo (hace 20 h) cumpla 24.
+  await run("INSERT INTO jobs (id, user_id, status, created_at, updated_at) VALUES ('q-job', 3, 'running', ?, ?)", [now.toISOString(), now.toISOString()]);
+  const blocked = await checkCustomQuota(3, now);
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.used, 5);
+  if (!blocked.allowed) assert.equal(blocked.retryAt.toISOString(), new Date(now.getTime() + 4 * 60 * 60_000).toISOString());
+
+  assert.equal((await checkCustomQuota(4, now)).allowed, true, "el cupo de un usuario no afecta a otro");
+  assert.equal(formatWait(4 * 60 * 60_000), "4 h");
+  assert.equal(formatWait(3 * 60 * 60_000 + 12 * 60_000), "3 h 12 min");
+  assert.equal(formatWait(45 * 60_000), "45 min");
+  assert.equal(formatWait(10_000), "un minuto");
+});
