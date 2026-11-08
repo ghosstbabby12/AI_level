@@ -7,7 +7,8 @@ import { parseDescription } from "../generator/parser";
 import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
 import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
-import { CustomGameError, writeCustomGame } from "../generator/customGame";
+import { CustomGameError, CustomGameUsage, writeCustomGame } from "../generator/customGame";
+import { finishCustomGeneration, GenerationEntry, linkJob, recordGeneration } from "../store/generations";
 import { checkCustomQuota, formatWait } from "../store/customQuota";
 import { getJob, startJob } from "../store/jobs";
 import { parseDescriptionKeywords } from "../generator/keywordParser";
@@ -41,8 +42,8 @@ const withUrls = (level: StoredGame) =>
     : { ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
 
 
-async function createCustomGame(spec: LevelSpec, userId: number) {
-  const html = await writeCustomGame(spec);
+async function createCustomGame(spec: LevelSpec, userId: number, onUsage: (usage: CustomGameUsage) => void) {
+  const html = await writeCustomGame(spec, onUsage);
   const game: CustomGame = {
     id: uuidv4(),
     layout: "custom",
@@ -78,8 +79,23 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     return res.status(400).json({ error: "El campo 'seed' debe ser un entero." });
   }
 
+  const startedAt = Date.now();
+  const userId = req.user!.id;
   const parsed = await parseDescription(description, seed);
+  // Cada salida de aqui en adelante deja una fila en generations (sin esperar a la base).
+  const track = (entry: Pick<GenerationEntry, "status" | "rejectionKind" | "errorMessage">) =>
+    recordGeneration({
+      userId,
+      prompt: description,
+      trace: parsed.trace,
+      fit: parsed.ok ? parsed.spec.fit ?? null : null,
+      layout: parsed.ok ? parsed.spec.layout : null,
+      latencyMs: Date.now() - startedAt,
+      ...entry,
+    });
+
   if (!parsed.ok) {
+    track({ status: "rejected", rejectionKind: "invalid_input", errorMessage: parsed.reason });
     return res.status(422).json({ error: parsed.reason, code: "invalid_description" });
   }
   const { spec } = parsed;
@@ -88,24 +104,42 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
   // enseguida con un trabajo que el cliente consulta hasta que termina.
   if (spec.fit === "custom") {
     if (process.env.CUSTOM_GAMES === "off") {
-      return res.status(503).json({ error: "Los juegos creados a medida están desactivados por ahora. Prueba con un estilo existente.", code: "custom_disabled" });
+      const error = "Los juegos creados a medida están desactivados por ahora. Prueba con un estilo existente.";
+      track({ status: "rejected", rejectionKind: "disabled", errorMessage: error });
+      return res.status(503).json({ error, code: "custom_disabled" });
     }
-    const quota = await checkCustomQuota(req.user!.id);
+    const quota = await checkCustomQuota(userId);
     if (!quota.allowed) {
       const waitMs = quota.retryAt.getTime() - Date.now();
+      const error = `Llegaste al límite de ${quota.limit} juegos creados a medida en 24 horas. Podrás crear otro en ${formatWait(waitMs)}. Mientras tanto, puedes generar niveles de los estilos existentes.`;
+      track({ status: "rejected", rejectionKind: "quota", errorMessage: error });
       res.setHeader("Retry-After", String(Math.max(1, Math.ceil(waitMs / 1000))));
-      return res.status(429).json({
-        error: `Llegaste al límite de ${quota.limit} juegos creados a medida en 24 horas. Podrás crear otro en ${formatWait(waitMs)}. Mientras tanto, puedes generar niveles de los estilos existentes.`,
-        code: "custom_limit",
-        limit: quota.limit,
-        retryAt: quota.retryAt.toISOString(),
-      });
+      return res.status(429).json({ error, code: "custom_limit", limit: quota.limit, retryAt: quota.retryAt.toISOString() });
     }
-    const job = await startJob(req.user!.id, () =>
-      createCustomGame(spec, req.user!.id).catch((error) => {
-        throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
-      }),
-    );
+
+    // La fila nace pendiente y el trabajo la cierra; si el servidor se reinicia antes,
+    // el barrido de arranque la marca como interrumpida.
+    const record = track({ status: "pending" });
+    let job;
+    try {
+      job = await startJob(userId, async () => {
+        const writingStartedAt = Date.now();
+        let usage: CustomGameUsage | undefined;
+        try {
+          const game = await createCustomGame(spec, userId, (u) => (usage = u));
+          void finishCustomGeneration(record, { status: "success", usage, latencyMs: Date.now() - writingStartedAt });
+          return game;
+        } catch (error) {
+          // En la base, el error real; al usuario, solo los mensajes pensados para el.
+          void finishCustomGeneration(record, { status: "error", errorMessage: (error as Error).message, usage, latencyMs: Date.now() - writingStartedAt });
+          throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
+        }
+      });
+    } catch (error) {
+      void finishCustomGeneration(record, { status: "error", errorMessage: `no se pudo iniciar el trabajo: ${(error as Error).message}`, latencyMs: 0 });
+      throw error;
+    }
+    void linkJob(record, job.id);
     return res.status(202).json({ job: job.id, title: spec.narrative?.title, story: spec.narrative?.story });
   }
 
@@ -114,8 +148,10 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     const built = buildLevel(spec);
     level = toGeneratedLevel(uuidv4(), spec, built, renderAscii(built.grid, spec.theme, spec.layout));
   } catch (error) {
+    track({ status: "error", errorMessage: (error as Error).message });
     return res.status(500).json({ error: (error as Error).message });
   }
+  track({ status: "success" });
 
   // Si la base falla, el nivel se puede jugar igual: solo no quedara en "Mis juegos".
   let saved = true;

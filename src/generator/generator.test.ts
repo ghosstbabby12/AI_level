@@ -344,6 +344,85 @@ test("el tope de juegos a medida es por usuario, cuenta los que estan en proceso
   assert.equal(formatWait(10_000), "un minuto");
 });
 
+test("el parser informa por donde paso cada interpretacion", async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("./parser");
+
+  const basic = await parseFull("ab", 1);
+  assert.equal(basic.ok, false);
+  assert.deepEqual(basic.trace, { source: "basic", model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 });
+
+  // Sin API key: respaldo por palabras clave, con el motivo y sin tokens.
+  const keywords = await parseFull("un laberinto de hielo con trampas", 1);
+  assert.equal(keywords.ok, true);
+  assert.equal(keywords.trace.source, "keywords");
+  assert.equal(keywords.trace.fallbackReason, "no_key");
+  assert.equal(keywords.trace.tokensIn, 0);
+});
+
+test("generations: registra cada pedido, cierra los juegos a medida y marca los interrumpidos", async () => {
+  const { dbReady, first, run } = await import("../store/db");
+  await dbReady;
+  const gen = await import("../store/generations");
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (5, 'e@e.co', 'E', 'x', 'now')");
+  const row = (id: string) => first<Record<string, unknown>>("SELECT * FROM generations WHERE id = ?", [id]);
+  const aiTrace = { source: "ai" as const, model: "claude-sonnet-5", tokensIn: 30, tokensOut: 300, cacheRead: 5397, cacheWrite: 0 };
+
+  // Un nivel normal: una sola fila, cerrada en el momento.
+  const level = gen.recordGeneration({ userId: 5, prompt: "un laberinto", trace: aiTrace, fit: "exact", layout: "maze", status: "success", latencyMs: 812.4 });
+  await level.chain;
+  const saved = await row(level.id);
+  assert.equal(saved?.status, "success");
+  assert.equal(saved?.model, "claude-sonnet-5");
+  assert.equal(Number(saved?.cache_read_tokens), 5397);
+  assert.equal(Number(saved?.latency_ms), 812);
+
+  // Rechazo por cuota: se distingue de un texto invalido.
+  const quota = gen.recordGeneration({ userId: 5, prompt: "un duelo", trace: aiTrace, fit: "custom", status: "rejected", rejectionKind: "quota", latencyMs: 5 });
+  await quota.chain;
+  assert.equal((await row(quota.id))?.rejection_kind, "quota");
+
+  // Respaldo por fallo de la API: el pedido sale bien, pero el motivo queda anotado.
+  const fallback = gen.recordGeneration({
+    userId: 5, prompt: "un bosque", status: "success", latencyMs: 5,
+    trace: { source: "keywords", fallbackReason: "api_error", apiError: "error de API 529: overloaded", model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+  await fallback.chain;
+  assert.equal((await row(fallback.id))?.fallback_reason, "api_error");
+  assert.match(String((await row(fallback.id))?.error_message), /529/);
+
+  // Juego a medida: nace pendiente; el trabajo lo cierra con sus tokens en columnas aparte.
+  // Las actualizaciones se encadenan detras del INSERT aunque se pidan sin esperar.
+  const custom = gen.recordGeneration({ userId: 5, prompt: "un duelo", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  void gen.linkJob(custom, "job-1");
+  await gen.finishCustomGeneration(custom, { status: "success", usage: { model: "claude-sonnet-5", tokensIn: 700, tokensOut: 15000 }, latencyMs: 95_000 });
+  const done = await row(custom.id);
+  assert.equal(done?.status, "success");
+  assert.equal(done?.job_id, "job-1");
+  assert.equal(Number(done?.tokens_out), 300, "los tokens de interpretar no se mezclan con los de escribir");
+  assert.equal(Number(done?.custom_tokens_out), 15000);
+
+  // Un juego que salio mal tambien registra lo que se pago.
+  const failed = gen.recordGeneration({ userId: 5, prompt: "otro duelo", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  await gen.finishCustomGeneration(failed, { status: "error", errorMessage: "El juego quedó demasiado largo", usage: { model: "claude-sonnet-5", tokensIn: 700, tokensOut: 20000 }, latencyMs: 120_000 });
+  assert.equal((await row(failed.id))?.status, "error");
+  assert.equal(Number((await row(failed.id))?.custom_tokens_out), 20000);
+
+  // Reinicio a mitad: la pendiente pasa a error y un cierre tardio ya no la pisa.
+  const orphan = gen.recordGeneration({ userId: 5, prompt: "a medias", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  await orphan.chain;
+  assert.equal(await gen.recoverInterruptedGenerations(), 1);
+  assert.equal((await row(orphan.id))?.error_message, gen.INTERRUPTED_ON_RESTART);
+  await gen.finishCustomGeneration(orphan, { status: "success", latencyMs: 1 });
+  assert.equal((await row(orphan.id))?.status, "error");
+  assert.equal((await row(custom.id))?.status, "success", "las terminadas no se tocan");
+
+  // Un fallo de la base no lanza: solo queda en el log.
+  const bad = gen.recordGeneration({ userId: 5, prompt: "x", trace: aiTrace, status: "success", latencyMs: 1, rejectionKind: "no_existe" as never });
+  await bad.chain;
+  assert.equal(await row(bad.id), undefined);
+});
+
 test("la IA clasifica por mecanica: lo que ningun estilo juega va a juego a medida", { skip: !AI_KEY && "solo con RUN_AI_EVALS=1 y ANTHROPIC_API_KEY (npm run test:ai)" }, async () => {
   process.env.ANTHROPIC_API_KEY = AI_KEY;
   const { parseDescription: parseWithAi } = await import("./parser");

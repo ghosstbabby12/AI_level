@@ -5,6 +5,7 @@ import { attachUser } from "./auth/auth";
 import { authRouter } from "./routes/auth";
 import { levelsRouter } from "./routes/levels";
 import { dbReady } from "./store/db";
+import { recoverInterruptedGenerations } from "./store/generations";
 import { startJobMaintenance } from "./store/jobs";
 
 const app = express();
@@ -39,7 +40,11 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
 });
 
 dbReady
-  .then(() => startJobMaintenance())
+  .then(async () => {
+    await startJobMaintenance();
+    const interrupted = await recoverInterruptedGenerations();
+    if (interrupted) console.warn(`[generations] ${interrupted} juego(s) a medida interrumpidos por el reinicio`);
+  })
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Artificial Levels API escuchando en http://localhost:${PORT}`);
