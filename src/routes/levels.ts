@@ -7,7 +7,7 @@ import { parseDescription } from "../generator/parser";
 import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
 import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
-import { CustomGameError, CustomGameUsage, writeCustomGame } from "../generator/customGame";
+import { CustomGameError, CustomGameUsage, InvalidGameError, writeCustomGame } from "../generator/customGame";
 import { finishCustomGeneration, GenerationEntry, linkJob, recordGeneration } from "../store/generations";
 import { checkCustomQuota, formatWait } from "../store/customQuota";
 import { getJob, startJob } from "../store/jobs";
@@ -131,7 +131,8 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
           return game;
         } catch (error) {
           // En la base, el error real; al usuario, solo los mensajes pensados para el.
-          void finishCustomGeneration(record, { status: "error", errorMessage: (error as Error).message, usage, latencyMs: Date.now() - writingStartedAt });
+          const detail = error instanceof InvalidGameError ? `juego invalido tras corregir: ${error.problems.join(" | ")}` : (error as Error).message;
+          void finishCustomGeneration(record, { status: "error", errorMessage: detail, usage, latencyMs: Date.now() - writingStartedAt });
           throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
         }
       });

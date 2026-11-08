@@ -423,6 +423,24 @@ test("generations: registra cada pedido, cierra los juegos a medida y marca los 
   assert.equal(await row(bad.id), undefined);
 });
 
+test("los juegos a medida se revisan antes de guardarse", async () => {
+  const { findGameProblems } = await import("./customGame");
+  const page = (body: string) => `<!doctype html><html><body><canvas></canvas>${body}</body></html>`;
+
+  assert.deepEqual(findGameProblems(page("<script>const a = 1;\nrequestAnimationFrame(() => a);</script>")), [], "un juego correcto pasa");
+  assert.deepEqual(findGameProblems(page('<script type="application/json">{"no": "es codigo"</script><script>let x = 2;</script>')), [], "los datos no se compilan");
+
+  const syntax = findGameProblems(page("<script>let ok = 1;</script><script>function f() {\n  let x = ;\n}</script>"));
+  assert.equal(syntax.length, 1);
+  assert.match(syntax[0], /script 2, línea 2/, "dice en que script y linea esta el error");
+
+  assert.match(findGameProblems(page("<script>const best = localStorage.getItem('r');</script>")).join(), /localStorage/);
+  assert.match(findGameProblems(page('<script src="https://cdn.x/juego.js"></script>')).join(), /externo/);
+  assert.match(findGameProblems(page("<script>fetch('/api')</script>")).join(), /red/);
+  assert.match(findGameProblems("<html><body><script>let a = 1;</script>").join(), /incompleto/);
+  assert.match(findGameProblems(page("<p>sin codigo</p>")).join(), /ningún <script>/);
+});
+
 test("la IA clasifica por mecanica: lo que ningun estilo juega va a juego a medida", { skip: !AI_KEY && "solo con RUN_AI_EVALS=1 y ANTHROPIC_API_KEY (npm run test:ai)" }, async () => {
   process.env.ANTHROPIC_API_KEY = AI_KEY;
   const { parseDescription: parseWithAi } = await import("./parser");

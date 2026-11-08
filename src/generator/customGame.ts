@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import vm from "node:vm";
 import { LevelSpec } from "./types";
 
 const MODEL = () => process.env.ANTHROPIC_MODEL || "claude-opus-5";
@@ -65,30 +66,104 @@ export interface CustomGameUsage {
 }
 
 /**
+ * Problemas que impedirian que el juego arranque, revisados sin ejecutarlo:
+ * - Cada <script> en linea se compila con vm.Script (solo analiza la sintaxis, no corre nada).
+ * - Almacenamiento del navegador: en el iframe aislado (sin allow-same-origin) tocar
+ *   localStorage, sessionStorage, indexedDB o document.cookie lanza un error y el juego
+ *   se queda en negro.
+ * - Recursos externos: la politica de seguridad del iframe los bloquea.
+ * Devuelve una lista vacia si no encuentra nada.
+ */
+export function findGameProblems(html: string): string[] {
+  const problems: string[] = [];
+  if (!/<\/html>\s*$/i.test(html)) problems.push("El documento está incompleto: no termina en </html>.");
+
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+  if (scripts.length === 0) problems.push("El documento no tiene ningún <script> con el código del juego.");
+  scripts.forEach(([, attrs, code], index) => {
+    const name = `script ${index + 1}`;
+    if (/\bsrc\s*=/i.test(attrs)) {
+      problems.push(`El ${name} carga un archivo externo (src=...), que el iframe bloquea: el código debe ir en línea.`);
+      return;
+    }
+    const type = attrs.match(/\btype\s*=\s*["']?([^"'\s>]+)/i)?.[1].toLowerCase();
+    if (type && !/^(text|application)\/(javascript|ecmascript)$/.test(type)) return; // datos o plantillas, no codigo
+    try {
+      new vm.Script(code, { filename: `${name}.js` });
+    } catch (error) {
+      // La primera linea del stack de V8 trae "<archivo>:<linea>".
+      const line = String((error as Error).stack ?? "").match(new RegExp(`${name}\\.js:(\\d+)`))?.[1];
+      problems.push(`Error de sintaxis en el ${name}${line ? `, línea ${line}` : ""}: ${(error as Error).message}`);
+    }
+  });
+
+  const storage = html.match(/\b(localStorage|sessionStorage|indexedDB|document\.cookie)\b/);
+  if (storage) problems.push(`Usa ${storage[1]}, que no existe en el iframe aislado y detiene el juego al arrancar.`);
+  if (/\bfetch\s*\(|XMLHttpRequest|<link[^>]+href\s*=\s*["']?https?:|<img[^>]+src\s*=\s*["']?https?:/i.test(html)) {
+    problems.push("Pide recursos por red (fetch, imágenes o estilos externos), que el iframe bloquea.");
+  }
+  return problems;
+}
+
+/** Lo que el usuario lee cuando el juego no se pudo crear; el detalle tecnico va al registro. */
+const UNFIXABLE =
+  "La IA escribió un juego con errores y no pudo corregirlo, así que no se guardó ni cuenta para tu límite diario. " +
+  "Vuelve a intentarlo o describe el juego de otra forma (por ejemplo, con reglas más simples).";
+
+/** Error para el usuario con el detalle tecnico aparte, para la tabla generations. */
+export class InvalidGameError extends CustomGameError {
+  constructor(readonly problems: string[]) {
+    super(UNFIXABLE);
+  }
+}
+
+async function requestGame(messages: Anthropic.MessageParam[]): Promise<{ text: string; usage: CustomGameUsage; stop: string | null }> {
+  const message = await getClient()
+    .messages.stream({ model: MODEL(), max_tokens: MAX_OUTPUT_TOKENS, thinking: { type: "disabled" }, system: SYSTEM_PROMPT, messages })
+    .finalMessage();
+  const usage = { model: message.model, tokensIn: message.usage.input_tokens, tokensOut: message.usage.output_tokens };
+  console.log(`[juego libre] ${usage.model} tokens: entrada=${usage.tokensIn} salida=${usage.tokensOut}`);
+  return { text: message.content.map((block) => (block.type === "text" ? block.text : "")).join(""), usage, stop: message.stop_reason };
+}
+
+function extractHtml(text: string): string {
+  const fenced = text.match(/```html\s*([\s\S]*?)```/i);
+  return (fenced ? fenced[1] : text).trim();
+}
+
+/**
  * Pide a Claude un juego completo y devuelve su HTML; lanza CustomGameError si no sirve.
- * onUsage se llama en cuanto llega la respuesta, antes de validarla: un juego rechazado
- * tambien se pago y debe quedar registrado.
+ * Si el juego tiene errores se pide una sola correccion con el detalle exacto; si sigue
+ * mal, lanza InvalidGameError y el juego no se guarda.
+ * onUsage recibe el total acumulado despues de cada llamada, antes de validarla: un juego
+ * rechazado tambien se pago y debe quedar registrado.
  */
 export async function writeCustomGame(spec: LevelSpec, onUsage?: (usage: CustomGameUsage) => void): Promise<string> {
-  const stream = getClient().messages.stream({
-    model: MODEL(),
-    max_tokens: MAX_OUTPUT_TOKENS,
-    thinking: { type: "disabled" },
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage(spec) }],
-  });
-  const message = await stream.finalMessage();
-  const usage: CustomGameUsage = { model: message.model, tokensIn: message.usage.input_tokens, tokensOut: message.usage.output_tokens };
-  console.log(`[juego libre] ${usage.model} tokens: entrada=${usage.tokensIn} salida=${usage.tokensOut}`);
-  onUsage?.(usage);
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage(spec) }];
+  let total: CustomGameUsage | null = null;
+  let problems: string[] = [];
 
-  if (message.stop_reason === "max_tokens") throw new CustomGameError("El juego quedó demasiado largo y salió incompleto.");
-  if (message.stop_reason === "refusal") throw new CustomGameError("No se puede crear un juego con esa descripción.");
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { text, usage, stop } = await requestGame(messages);
+    total = total ? { ...usage, tokensIn: total.tokensIn + usage.tokensIn, tokensOut: total.tokensOut + usage.tokensOut } : usage;
+    onUsage?.(total);
 
-  const text = message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
-  const fenced = text.match(/```html\s*([\s\S]*?)```/i);
-  const html = (fenced ? fenced[1] : text).trim();
-  if (!/<script[\s>]/i.test(html) || !/<\/html>\s*$/i.test(html)) throw new CustomGameError("La respuesta no era un juego completo.");
-  if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new CustomGameError("El juego resultó demasiado grande.");
-  return html;
+    if (stop === "max_tokens") throw new CustomGameError("El juego quedó demasiado largo y salió incompleto. Prueba a pedir algo más sencillo.");
+    if (stop === "refusal") throw new CustomGameError("No se puede crear un juego con esa descripción.");
+
+    const html = extractHtml(text);
+    if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new CustomGameError("El juego resultó demasiado grande. Prueba a pedir algo más sencillo.");
+    problems = findGameProblems(html);
+    if (problems.length === 0) return html;
+
+    console.warn(`[juego libre] intento ${attempt} con errores: ${problems.join(" | ")}`);
+    messages.push(
+      { role: "assistant", content: text },
+      {
+        role: "user",
+        content: `El juego no se puede publicar porque tiene estos problemas:\n${problems.map((p) => `- ${p}`).join("\n")}\n\nCorrígelos y responde con el documento HTML completo corregido, dentro de un bloque \`\`\`html.`,
+      },
+    );
+  }
+  throw new InvalidGameError(problems);
 }
