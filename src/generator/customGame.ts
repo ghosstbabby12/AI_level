@@ -57,8 +57,19 @@ function userMessage(spec: LevelSpec): string {
 
 export class CustomGameError extends Error {}
 
-/** Pide a Claude un juego completo y devuelve su HTML; lanza CustomGameError si no sirve. */
-export async function writeCustomGame(spec: LevelSpec): Promise<string> {
+/** Lo que costo escribir el juego, con el modelo que respondio segun la API. */
+export interface CustomGameUsage {
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+/**
+ * Pide a Claude un juego completo y devuelve su HTML; lanza CustomGameError si no sirve.
+ * onUsage se llama en cuanto llega la respuesta, antes de validarla: un juego rechazado
+ * tambien se pago y debe quedar registrado.
+ */
+export async function writeCustomGame(spec: LevelSpec, onUsage?: (usage: CustomGameUsage) => void): Promise<string> {
   const stream = getClient().messages.stream({
     model: MODEL(),
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -67,7 +78,9 @@ export async function writeCustomGame(spec: LevelSpec): Promise<string> {
     messages: [{ role: "user", content: userMessage(spec) }],
   });
   const message = await stream.finalMessage();
-  console.log(`[juego libre] ${MODEL()} tokens: entrada=${message.usage.input_tokens} salida=${message.usage.output_tokens}`);
+  const usage: CustomGameUsage = { model: message.model, tokensIn: message.usage.input_tokens, tokensOut: message.usage.output_tokens };
+  console.log(`[juego libre] ${usage.model} tokens: entrada=${usage.tokensIn} salida=${usage.tokensOut}`);
+  onUsage?.(usage);
 
   if (message.stop_reason === "max_tokens") throw new CustomGameError("El juego quedó demasiado largo y salió incompleto.");
   if (message.stop_reason === "refusal") throw new CustomGameError("No se puede crear un juego con esa descripción.");

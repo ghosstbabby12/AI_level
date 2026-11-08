@@ -42,8 +42,32 @@ const AiSpecSchema = z.object({
 
 export type AiSpec = z.infer<typeof AiSpecSchema>;
 
-/** O un spec listo para levelBuilder, o el motivo por el que se rechaza el texto. */
-export type ParseResult = { ok: true; spec: LevelSpec } | { ok: false; reason: string };
+/**
+ * Por donde paso la interpretacion y cuanto costo, para registrarlo en la tabla generations.
+ * - basic: lo rechazo la validacion local, sin llamar a la IA.
+ * - cache: la misma descripcion ya se habia interpretado; no se pago nada.
+ * - ai: respondio Claude.
+ * - keywords: se uso el interprete por palabras clave; fallbackReason dice por que.
+ * Los tokens son los que factura la API, cada tipo por separado. Si la IA respondio algo
+ * inservible (invalid_output) los tokens se pagaron igual, y quedan registrados.
+ */
+export interface ParseTrace {
+  source: "basic" | "cache" | "ai" | "keywords";
+  fallbackReason?: "no_key" | "daily_limit" | "api_error" | "invalid_output";
+  /** El modelo que respondio segun la API, no el configurado. */
+  model: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  cacheRead: number;
+  cacheWrite: number;
+  apiError?: string;
+}
+
+/** O un spec listo para levelBuilder, o el motivo por el que se rechaza el texto; siempre con su traza. */
+export type ParseResult = ({ ok: true; spec: LevelSpec } | { ok: false; reason: string }) & { trace: ParseTrace };
+
+type AiCall = Pick<ParseTrace, "model" | "tokensIn" | "tokensOut" | "cacheRead" | "cacheWrite">;
+const NO_CALL: AiCall = { model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5";
 const MAX_OUTPUT_TOKENS = 600;
@@ -174,7 +198,8 @@ export function aiSpecToLevelSpec(ai: AiSpec, description: string, seed: number)
   };
 }
 
-async function requestAiSpec(anthropic: Anthropic, description: string): Promise<AiSpec | null> {
+/** La respuesta de Claude (null si no sirve) y lo que costo, aunque no sirva. */
+async function requestAiSpec(anthropic: Anthropic, description: string): Promise<{ ai: AiSpec | null; call: AiCall }> {
   const response = await anthropic.messages.parse({
     model: MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -187,29 +212,35 @@ async function requestAiSpec(anthropic: Anthropic, description: string): Promise
     output_config: { format: zodOutputFormat(AiSpecSchema) },
   });
 
-  const usage = response.usage;
+  const call: AiCall = {
+    model: response.model,
+    tokensIn: response.usage.input_tokens,
+    tokensOut: response.usage.output_tokens,
+    cacheRead: response.usage.cache_read_input_tokens ?? 0,
+    cacheWrite: response.usage.cache_creation_input_tokens ?? 0,
+  };
   console.log(
-    `[parser] ${MODEL} tokens: entrada=${usage.input_tokens} cache_escrita=${usage.cache_creation_input_tokens ?? 0} ` +
-      `cache_leida=${usage.cache_read_input_tokens ?? 0} salida=${usage.output_tokens}`,
+    `[parser] ${call.model} tokens: entrada=${call.tokensIn} cache_escrita=${call.cacheWrite} ` +
+      `cache_leida=${call.cacheRead} salida=${call.tokensOut}`,
   );
 
   if (response.stop_reason !== "end_turn") {
     console.warn(`[parser] respuesta incompleta (stop_reason=${response.stop_reason}); usando respaldo`);
-    return null;
+    return { ai: null, call };
   }
 
   // parse() ya valida con el esquema; se revalida para no depender de ese detalle del SDK.
   const result = AiSpecSchema.safeParse(response.parsed_output);
   if (!result.success) {
     console.warn(`[parser] JSON invalido del modelo: ${result.error.message}`);
-    return null;
+    return { ai: null, call };
   }
-  return result.data;
+  return { ai: result.data, call };
 }
 
-function fromAi(ai: AiSpec, description: string, seed: number): ParseResult {
-  if (!ai.is_level_request) return { ok: false, reason: ai.rejection_reason?.trim() || NOT_A_LEVEL_REASON };
-  return { ok: true, spec: aiSpecToLevelSpec(ai, description, seed) };
+function fromAi(ai: AiSpec, description: string, seed: number, trace: ParseTrace): ParseResult {
+  if (!ai.is_level_request) return { ok: false, reason: ai.rejection_reason?.trim() || NOT_A_LEVEL_REASON, trace };
+  return { ok: true, spec: aiSpecToLevelSpec(ai, description, seed), trace };
 }
 
 /**
@@ -220,43 +251,50 @@ function fromAi(ai: AiSpec, description: string, seed: number): ParseResult {
  */
 export async function parseDescription(description: string, seed?: number): Promise<ParseResult> {
   const basic = basicRejection(description);
-  if (basic) return { ok: false, reason: basic };
+  if (basic) return { ok: false, reason: basic, trace: { source: "basic", ...NO_CALL } };
 
   const resolvedSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
-  const fallback = (): ParseResult =>
-    mentionsLevel(description)
-      ? { ok: true, spec: { ...parseDescriptionKeywords(description, resolvedSeed), source: "keywords" } }
-      : { ok: false, reason: NOT_A_LEVEL_REASON };
+  const fallback = (reason: NonNullable<ParseTrace["fallbackReason"]>, call: AiCall = NO_CALL, apiError?: string): ParseResult => {
+    const trace: ParseTrace = { source: "keywords", fallbackReason: reason, ...call, ...(apiError ? { apiError } : {}) };
+    return mentionsLevel(description)
+      ? { ok: true, spec: { ...parseDescriptionKeywords(description, resolvedSeed), source: "keywords" }, trace }
+      : { ok: false, reason: NOT_A_LEVEL_REASON, trace };
+  };
 
   const key = cacheKey(description);
   const cached = cache.get(key);
   if (cached) {
     remember(key, cached);
-    return fromAi(cached, description, resolvedSeed);
+    return fromAi(cached, description, resolvedSeed, { source: "cache", ...NO_CALL });
   }
 
   const anthropic = getClient();
-  if (!anthropic) return fallback();
+  if (!anthropic) return fallback("no_key");
   if (!takeDailySlot()) {
     console.warn(`[parser] tope diario de ${DAILY_AI_LIMIT} llamadas alcanzado; usando respaldo`);
-    return fallback();
+    return fallback("daily_limit");
   }
 
   try {
-    const ai = await requestAiSpec(anthropic, description);
-    if (!ai) return fallback();
+    const { ai, call } = await requestAiSpec(anthropic, description);
+    if (!ai) return fallback("invalid_output", call);
     remember(key, ai);
-    return fromAi(ai, description, resolvedSeed);
+    return fromAi(ai, description, resolvedSeed, { source: "ai", ...call });
   } catch (error) {
+    let message: string;
     if (error instanceof Anthropic.AuthenticationError) {
-      console.error("[parser] ANTHROPIC_API_KEY invalida; usando respaldo");
+      message = "ANTHROPIC_API_KEY invalida";
+      console.error(`[parser] ${message}; usando respaldo`);
     } else if (error instanceof Anthropic.RateLimitError) {
-      console.warn("[parser] limite de tasa de la API; usando respaldo");
+      message = "limite de tasa de la API";
+      console.warn(`[parser] ${message}; usando respaldo`);
     } else if (error instanceof Anthropic.APIError) {
-      console.warn(`[parser] error de API ${error.status}: ${error.message}; usando respaldo`);
+      message = `error de API ${error.status}: ${error.message}`;
+      console.warn(`[parser] ${message}; usando respaldo`);
     } else {
-      console.warn(`[parser] fallo inesperado: ${(error as Error).message}; usando respaldo`);
+      message = `fallo inesperado: ${(error as Error).message}`;
+      console.warn(`[parser] ${message}; usando respaldo`);
     }
-    return fallback();
+    return fallback("api_error", NO_CALL, message);
   }
 }
