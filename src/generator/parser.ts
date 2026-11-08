@@ -180,12 +180,18 @@ async function requestAiSpec(anthropic: Anthropic, description: string): Promise
     max_tokens: MAX_OUTPUT_TOKENS,
     // Tarea de clasificacion corta: sin razonamiento extendido para que los tokens vayan al JSON.
     thinking: { type: "disabled" },
-    system: SYSTEM_PROMPT,
+    // El prompt de sistema es identico en cada llamada: se marca para cache (lecturas a ~0.1x el precio de
+    // entrada durante 5 minutos). Lo unico que cambia, la descripcion, va despues del punto de cache.
+    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: `<descripcion>${description}</descripcion>` }],
     output_config: { format: zodOutputFormat(AiSpecSchema) },
   });
 
-  console.log(`[parser] ${MODEL} tokens: entrada=${response.usage.input_tokens} salida=${response.usage.output_tokens}`);
+  const usage = response.usage;
+  console.log(
+    `[parser] ${MODEL} tokens: entrada=${usage.input_tokens} cache_escrita=${usage.cache_creation_input_tokens ?? 0} ` +
+      `cache_leida=${usage.cache_read_input_tokens ?? 0} salida=${usage.output_tokens}`,
+  );
 
   if (response.stop_reason !== "end_turn") {
     console.warn(`[parser] respuesta incompleta (stop_reason=${response.stop_reason}); usando respaldo`);
