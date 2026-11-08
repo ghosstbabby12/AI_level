@@ -59,6 +59,36 @@ const SCHEMA = [
     updated_at    TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS jobs_by_status ON jobs (status, created_at)`,
+  // Una fila por pedido a POST /generate: que se interpreto, con que modelo, cuanto costo y como termino.
+  // Los tokens van separados como los factura la API: entrada normal, escritura y lectura de cache.
+  // Las columnas custom_* son la segunda llamada (escribir el juego a medida), que llena el trabajo al terminar.
+  `CREATE TABLE IF NOT EXISTS generations (
+    id                 TEXT PRIMARY KEY,
+    user_id            INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    prompt_original    TEXT NOT NULL,
+    source             TEXT NOT NULL CHECK (source IN ('basic', 'cache', 'ai', 'keywords')),
+    fallback_reason    TEXT CHECK (fallback_reason IN ('no_key', 'daily_limit', 'api_error', 'invalid_output')),
+    fit                TEXT,
+    layout             TEXT,
+    model              TEXT,
+    tokens_in          INTEGER NOT NULL DEFAULT 0,
+    tokens_out         INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    custom_model       TEXT,
+    custom_tokens_in   INTEGER NOT NULL DEFAULT 0,
+    custom_tokens_out  INTEGER NOT NULL DEFAULT 0,
+    latency_ms         INTEGER NOT NULL,
+    custom_latency_ms  INTEGER,
+    status             TEXT NOT NULL CHECK (status IN ('pending', 'success', 'rejected', 'error')),
+    rejection_kind     TEXT CHECK (rejection_kind IN ('invalid_input', 'quota', 'disabled')),
+    error_message      TEXT,
+    job_id             TEXT,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS generations_by_user ON generations (user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS generations_by_status ON generations (status)`,
 ];
 
 async function migrate(): Promise<void> {
