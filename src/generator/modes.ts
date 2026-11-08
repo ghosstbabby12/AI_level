@@ -11,8 +11,10 @@ export interface ModeInfo {
   goal: string;
   /** Instrucciones que ve el jugador. */
   controls: string;
-  /** Cuando debe elegirlo la IA. */
+  /** Cuando debe elegirlo la IA (genero y referencias). */
   hint: string;
+  /** Que hace y controla el jugador. La IA decide si un pedido encaja comparando esto, no el tema. */
+  mechanic: string;
   /** Palabras clave para el interprete sin IA. */
   stems: string[];
   sizes: { small: Size; normal: Size; large: Size };
@@ -42,6 +44,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Destruye la invasión antes de que llegue hasta ti.",
     controls: "Mover: flechas, A/D o mouse · Disparar: Espacio o clic (mantén pulsado) · Recoge lo que sueltan los enemigos · R reinicia",
     hint: "pilotar una nave abajo y disparar a una formacion de invasores que desciende (Space Invaders, Galaga, matamarcianos, batallas de naves).",
+    mechanic: "mueve una nave de lado a lado en la parte baja y dispara hacia arriba a una formacion que desciende.",
     stems: ["matamarcianos", "invader", "invasor", "invasion", "galaga", "marciano", "batalla espacial", "combate espacial", "=naves"],
     sizes: { small: [20, 13], normal: [24, 15], large: [30, 19] },
     limits: { w: [18, 36], h: [12, 23] },
@@ -55,6 +58,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Recoge objetos, da todas las vueltas y cruza la meta en primer lugar.",
     controls: "Acelerar: ↑ o W · Frenar: ↓ o S · Girar: ← → o A/D · Usar objeto: Espacio · Las cajas dan objetos, las monedas más velocidad y las franjas naranjas turbo · R reinicia",
     hint: "carreras de karts en perspectiva desde atras del vehiculo, en un circuito cerrado contra rivales y por vueltas, con cajas de objetos y monedas (carreras, Mario Kart, kart, circuito, rally).",
+    mechanic: "conduce un vehiculo (acelerar, frenar, girar) por un circuito y compite en vueltas contra rivales.",
     stems: ["carrera", "racing", "=race", "=races", "=auto", "=autos", "=coche", "=coches", "=pista", "circuito", "kart", "mario kart", "=rally", "formula 1"],
     sizes: { small: [80, 50], normal: [110, 70], large: [140, 90] },
     limits: { w: [60, 160], h: [40, 100] },
@@ -67,6 +71,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Rompe todos los bloques sin dejar caer la pelota.",
     controls: "Mover: mouse o flechas · Lanzar la pelota: clic o Espacio · Los bloques naranjas explotan · Los dorados dan mejoras · R reinicia",
     hint: "rebotar una pelota con una paleta para romper bloques (Breakout, Arkanoid, rompe ladrillos).",
+    mechanic: "mueve una paleta horizontal para devolver una pelota que rompe bloques.",
     stems: ["breakout", "arkanoid", "rompe bloques", "rompebloques", "rompe-bloques", "romper bloques", "rompe ladrillos", "ladrillos", "=bloques"],
     sizes: { small: [20, 13], normal: [24, 15], large: [30, 19] },
     limits: { w: [18, 36], h: [12, 23] },
@@ -79,6 +84,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Come todo lo que aparezca sin chocar contigo.",
     controls: "Girar: flechas o WASD · Cada bocado te hace más largo · No choques con las paredes, las trampas ni contigo · R reinicia",
     hint: "guiar una serpiente que crece al comer sin chocar (Snake, viborita, culebra).",
+    mechanic: "guia una serpiente que avanza sola por una cuadricula y crece al comer, sin chocar.",
     stems: ["snake", "serpiente", "culebra", "vibora", "viborita"],
     sizes: { small: [20, 13], normal: [28, 18], large: [36, 23] },
     limits: { w: [16, 48], h: [11, 30] },
@@ -93,6 +99,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Resiste todas las oleadas de enemigos.",
     controls: "Mover: flechas o WASD en cualquier dirección · Atacar: Espacio · Impulso: Shift · Los objetos curan · Sobrevive a todas las oleadas · R reinicia",
     hint: "arena cerrada donde llegan oleadas de enemigos cada vez mas numerosas y hay que resistir (supervivencia, hordas, zombies, vampire survivors, ultimo en pie).",
+    mechanic: "se mueve libremente por una arena y resiste oleadas de enemigos que lo persiguen, eliminandolos con un golpe simple a corta distancia.",
     stems: ["supervivencia", "sobrevivir", "sobrevive", "oleada", "survival", "survive", "horda", "=waves", "ultimo en pie"],
     sizes: { small: [27, 19], normal: [33, 23], large: [45, 29] },
     limits: { w: [21, 61], h: [15, 41] },
@@ -107,6 +114,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Apunta bien, acierta las dianas y no toques las bombas.",
     controls: "Apuntar: mouse o flechas · Disparar: clic o Espacio · En las dianas, cuanto más al centro, más puntos · No dispares a las bombas · R reinicia",
     hint: "galeria de tiro donde se apunta y dispara a dianas, sin mover un personaje (tiro al blanco, punteria, disparar, arqueria, francotirador).",
+    mechanic: "apunta una mira y dispara a blancos que aparecen y desaparecen; el personaje no se mueve.",
     stems: ["tiro al blanco", "galeria de tiro", "=diana", "=dianas", "punteria", "shooter", "disparar", "=disparos", "=disparo", "=tiro", "=tiros", "francotirador", "sniper", "=target", "=targets", "arqueria"],
     sizes: { small: [20, 13], normal: [24, 15], large: [30, 19] },
     limits: { w: [16, 36], h: [11, 23] },
@@ -120,6 +128,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Recógelo todo sin dejarte atrapar.",
     controls: "Mover: flechas o WASD (sigues avanzando solo) · Recógelo todo · Las esferas rosas te permiten atrapar a quienes te persiguen · Los bordes abiertos te llevan al otro lado · R reinicia",
     hint: "tablero simetrico visible completo, recoger todos los puntos mientras te persiguen y usar potenciadores (Pac-Man, comecocos, arcade, retro, persecucion, \"recoger todo\"). No tiene trampas ni salida; usa items enabled=true y prefiere enemy_kind \"ghost\".",
+    mechanic: "recorre un laberinto recogiendo todos los puntos mientras lo persiguen; los potenciadores le permiten atrapar a sus perseguidores.",
     stems: ["pacman", "pac man", "pac-man", "=arcade", "comecocos", "come cocos", "persecucion", "=retro"],
     sizes: { small: [21, 17], normal: [25, 19], large: [33, 23] },
     limits: { w: [17, 41], h: [13, 27] },
@@ -135,6 +144,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Avanza, salta y llega a la meta.",
     controls: "Mover: flechas o A/D · Saltar: ↑ / W / Espacio (mantén para saltar más alto) · Pisa a los enemigos y al jefe desde arriba · R reinicia",
     hint: "plataformas de scroll lateral (Mario, Sonic, saltar).",
+    mechanic: "corre y salta en vista lateral sobre plataformas y fosos, y elimina enemigos cayendoles encima.",
     stems: ["mario", "plataform", "platform", "sidescroll", "side scroll", "scroller", "lateral", "sonic", "saltar", "salto", "jump", "runner"],
     sizes: { small: [70, 14], normal: [120, 16], large: [200, 18] },
     limits: { w: [40, 300], h: [12, 20] },
@@ -148,6 +158,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Abre camino por las cuevas hasta la salida.",
     controls: MOVE_ATTACK,
     hint: "exploracion libre y fluida por cuevas de forma organica, minas o paisajes naturales sin salas rectas.",
+    mechanic: "explora con movimiento libre visto desde arriba hasta encontrar la salida, esquivando trampas y enemigos (con un golpe simple a corta distancia).",
     stems: ["cueva", "caverna", "=cave", "=caves", "cavern", "gruta", "=mina", "=minas", "=mine", "=mines", "subterrane", "underground", "fluid", "movimiento libre"],
     sizes: { small: [35, 23], normal: [51, 33], large: [71, 45] },
     limits: { w: [25, 91], h: [17, 61] },
@@ -160,6 +171,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Encuentra la salida antes de perderte.",
     controls: MOVE_ATTACK,
     hint: "laberintos de pasillos.",
+    mechanic: "recorre pasillos de un laberinto visto desde arriba hasta la salida, esquivando trampas y enemigos (con un golpe simple a corta distancia).",
     stems: ["laberint", "maze"],
     sizes: { small: [15, 15], normal: [25, 25], large: [39, 39] },
     limits: { w: [11, 51], h: [11, 51] },
@@ -173,6 +185,7 @@ export const MODES: Record<Layout, ModeInfo> = {
     goal: "Recorre las salas y escapa con vida.",
     controls: MOVE_ATTACK,
     hint: "mazmorras con salas (Zelda, roguelike).",
+    mechanic: "explora salas y pasillos vistos desde arriba hasta la salida, esquivando trampas y enemigos (con un golpe simple a corta distancia).",
     stems: ["mazmorr", "dungeon", "habitacion", "=room", "=rooms", "=sala", "=salas", "zelda", "rogue", "calabozo", "cripta", "catacumb"],
     sizes: { small: [31, 21], normal: [41, 27], large: [55, 35] },
     limits: { w: [25, 61], h: [17, 41] },

@@ -8,6 +8,10 @@ import { buildLevel } from "./levelBuilder";
 import { parseDescriptionKeywords as parseDescription } from "./keywordParser";
 import { validateLevel } from "./validator";
 
+// Las pruebas con la IA real cuestan dinero: solo corren con RUN_AI_EVALS=1 (npm run test:ai).
+// Se guarda la clave antes de que otros tests la borren para forzar el modo sin IA.
+const AI_KEY = process.env.RUN_AI_EVALS === "1" ? process.env.ANTHROPIC_API_KEY : undefined;
+
 // Base temporal para todo el archivo: los tests nunca tocan data/app.db ni Turso.
 delete process.env.TURSO_DATABASE_URL;
 process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "levels-")), "test.db");
@@ -338,4 +342,28 @@ test("el tope de juegos a medida es por usuario, cuenta los que estan en proceso
   assert.equal(formatWait(3 * 60 * 60_000 + 12 * 60_000), "3 h 12 min");
   assert.equal(formatWait(45 * 60_000), "45 min");
   assert.equal(formatWait(10_000), "un minuto");
+});
+
+test("la IA clasifica por mecanica: lo que ningun estilo juega va a juego a medida", { skip: !AI_KEY && "solo con RUN_AI_EVALS=1 y ANTHROPIC_API_KEY (npm run test:ai)" }, async () => {
+  process.env.ANTHROPIC_API_KEY = AI_KEY;
+  const { parseDescription: parseWithAi } = await import("./parser");
+  const fitOf = async (text: string) => {
+    const result = await parseWithAi(text, 1);
+    assert.ok(result.ok, `rechazado: "${text}"`);
+    return result.ok ? { fit: result.spec.fit, layout: result.spec.layout, source: result.spec.source } : null;
+  };
+
+  // La mecanica central no existe en ningun estilo: debe escribirse un juego nuevo.
+  for (const text of ["juego de espadas", "un duelo de samuráis con katanas", "un juego de peleas uno contra uno", "un juego de cartas de póker"]) {
+    const got = await fitOf(text);
+    assert.equal(got?.source, "ai", `"${text}" no paso por la IA`);
+    assert.equal(got?.fit, "custom", `"${text}" deberia ir a juego a medida, fue ${JSON.stringify(got)}`);
+  }
+
+  // Control: si la mecanica existe, se sigue adaptando (no todo debe volverse caro).
+  for (const [text, layout] of [["escapar de una cárcel esquivando guardias", "dungeon"], ["un barco pirata que dispara a una flota enemiga", "invaders"]] as const) {
+    const got = await fitOf(text);
+    assert.notEqual(got?.fit, "custom", `"${text}" deberia adaptarse, fue ${JSON.stringify(got)}`);
+    assert.equal(got?.layout, layout, `"${text}"`);
+  }
 });

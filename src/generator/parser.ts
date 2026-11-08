@@ -55,6 +55,7 @@ const DAILY_AI_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 1000;
 const MODE_LIST = MODE_PRIORITY.map((mode) => `  "${mode}": ${MODES[mode].hint}`).join("\n");
 const MODE_THEMES = MODE_PRIORITY.map((mode) => `${mode} -> "${MODES[mode].theme}"`).join(", ");
 const MODE_STYLES = MODE_PRIORITY.map((mode) => MODES[mode].style).join(", ");
+const MODE_MECHANICS = MODE_PRIORITY.map((mode) => `  "${mode}": el jugador ${MODES[mode].mechanic}`).join("\n");
 const MAX_ROUNDS = 10;
 
 const SYSTEM_PROMPT = `Interpretas descripciones de niveles de videojuego (en espanol o ingles) y las conviertes en una especificacion JSON. No generas el nivel; un generador procedural lo construye a partir de tu especificacion.
@@ -62,12 +63,20 @@ const SYSTEM_PROMPT = `Interpretas descripciones de niveles de videojuego (en es
 Campos:
 - is_level_request: decide esto primero. false SOLO si el texto no pide ningun juego: preguntas o datos ("cuando fue la guerra mundial"), conversacion ("hola, como estas"), tareas ajenas ("escribe un poema", "resuelve 2+2"), texto sin sentido o contenido sexual, de odio o que glorifique danar a personas reales. Cualquier juego, mecanica, tema o escenario es valido: nunca rechaces un pedido de juego por no encajar en un estilo.
 - rejection_reason: si is_level_request es false, una frase corta dirigida al usuario, en su idioma, que explique por que no se puede generar y sugiera como pedir un juego. Si es true, null. Cuando es false, rellena el resto de campos con valores por defecto.
-- fit: como encaja el pedido en los estilos de "layout".
-  "exact": un estilo lo representa bien.
-  "adapted": un estilo captura lo esencial aunque no sea identico (combate con espadas -> "dungeon" o "survival", que tienen ataque cuerpo a cuerpo; un shooter de zombies -> "survival"; una persecucion policial -> "racing"). Elige el layout mas cercano.
-  "custom": ningun estilo representa la mecanica central y adaptarlo seria darle otro juego (ajedrez, damas, futbol u otros deportes, cartas, ritmo, tower defense, puzles de logica, preguntas, simuladores, juegos por turnos). Se escribira un juego nuevo a medida; elige igualmente theme, difficulty, title y story.
-  Prefiere "adapted" a "custom" cuando lo esencial se conserva: el juego a medida es mas lento y caro.
-- adaptation_note: si fit es "adapted", una frase corta para el usuario, en su idioma, que diga como se interpreto (ej. "Lo convertí en una mazmorra donde combates con espada contra esqueletos."). Si no, null.
+- fit: decide si el juego pedido existe ya como estilo, comparando la MECANICA (que hace y controla el jugador, minuto a minuto), no el tema, los personajes ni el escenario. Que haya enemigos, un castillo o espadas en la historia no hace que una mecanica encaje. Mecanica de cada estilo:
+${MODE_MECHANICS}
+  "exact": la actividad central del pedido es la mecanica de un estilo y el tema tambien encaja.
+  "adapted": la actividad central del pedido ES la mecanica de un estilo; solo cambian el tema, los personajes o la ambientacion. Prueba: si quien lo pidio jugara ese estilo, reconoceria la actividad que pidio aunque los graficos sean otros.
+  "custom": la actividad central del pedido no es ninguna de esas mecanicas, o el pedido gira en torno a algo que los estilos solo tienen de forma superficial. En particular, el combate de los estilos es un golpe simple sin bloqueo, esquiva ni combos: si el pedido es SOBRE pelear (espadas, esgrima, duelos, artes marciales, juegos de pelea), es "custom". Tambien cartas, deportes, juegos de mesa o por turnos, puzles de logica, ritmo, preguntas, simuladores, gestion o historias con decisiones. Se escribira un juego nuevo a medida; elige igualmente theme, difficulty, title y story.
+  Ejemplos:
+  - "un juego de espadas" -> "custom" (el combate con espada es el centro; los estilos solo tienen un golpe simple).
+  - "un duelo de esgrima entre mosqueteros" -> "custom" (pelea uno contra uno).
+  - "un solitario de cartas" -> "custom" (no hay ningun estilo de cartas).
+  - "un puzle de empujar cajas hasta su sitio" -> "custom" (logica por turnos, no exploracion).
+  - "escapar de una carcel esquivando guardias" -> "adapted", layout "dungeon" (explorar salas hasta la salida esquivando enemigos).
+  - "un barco pirata que dispara a una flota enemiga" -> "adapted", layout "invaders" (mover y disparar a una formacion).
+  - "una persecucion policial en autos" -> "adapted", layout "racing" (conducir contra rivales).
+- adaptation_note: si fit es "adapted", una frase corta para el usuario, en su idioma, que diga que tema se aplico sobre que estilo (ej. "Lo convertí en una fuga por las salas de una cárcel, esquivando guardias."). Si no, null.
 - layout: el estilo de juego.
 ${MODE_LIST}
   Sin pista clara elige el que mejor encaje con el ambiente, sin recurrir siempre al mismo: bosque, cueva o mina -> "cave"; castillo o cripta -> "dungeon"; algo retro o de recoleccion -> "arcade".
