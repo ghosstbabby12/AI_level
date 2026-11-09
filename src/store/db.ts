@@ -89,11 +89,42 @@ const SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS generations_by_user ON generations (user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS generations_by_status ON generations (status)`,
+  // Foto de perfil, aparte de users para no arrastrar el binario en cada consulta de sesion.
+  // updated_at (ms) versiona la URL de la imagen, asi el navegador puede guardarla en cache.
+  `CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    mime       TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+    data       BLOB NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
 ];
+
+// Columnas agregadas despues de crear la tabla: CREATE TABLE IF NOT EXISTS no las suma
+// a una base que ya existe (como la de produccion), asi que se agregan si faltan.
+const ADDED_COLUMNS: Record<string, Record<string, string>> = {
+  users: { phone: "TEXT", updated_at: "TEXT" },
+};
+
+async function addMissingColumns(): Promise<void> {
+  for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+    const info = await client.execute(`PRAGMA table_info(${table})`);
+    const existing = new Set(info.rows.map((row) => String(row.name)));
+    for (const [column, type] of Object.entries(columns)) {
+      if (existing.has(column)) continue;
+      try {
+        await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      } catch (error) {
+        // Otra instancia pudo agregarla al mismo tiempo.
+        if (!/duplicate column/i.test(String(error))) throw error;
+      }
+    }
+  }
+}
 
 async function migrate(): Promise<void> {
   try {
     for (const sql of SCHEMA) await client.execute(sql);
+    await addMissingColumns();
   } catch (error) {
     // Muestra a que base se intento conectar (sin el token) para facilitar el diagnostico.
     const target = url.startsWith("file:") ? url : url.replace(/^(\w+:\/\/[^/?]+).*/, "$1");
