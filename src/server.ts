@@ -4,6 +4,7 @@ import express from "express";
 import { attachUser } from "./auth/auth";
 import { authRouter } from "./routes/auth";
 import { levelsRouter } from "./routes/levels";
+import { profileRouter } from "./routes/profile";
 import { dbReady } from "./store/db";
 import { recoverInterruptedGenerations } from "./store/generations";
 import { startJobMaintenance } from "./store/jobs";
@@ -33,6 +34,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/levels", levelsRouter);
+app.use("/api/profile", profileRouter);
 
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);

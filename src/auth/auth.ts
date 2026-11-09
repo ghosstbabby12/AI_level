@@ -6,6 +6,39 @@ export interface PublicUser {
   id: number;
   email: string;
   name: string;
+  phone: string | null;
+  /** URL versionada de la foto de perfil, o null si no tiene. */
+  avatarUrl: string | null;
+  createdAt: string;
+}
+
+// Lo que se lee de la base para armar un PublicUser (siempre con LEFT JOIN a user_avatars).
+const USER_COLUMNS = "u.id, u.email, u.name, u.phone, u.created_at, a.updated_at AS avatar_at";
+const USER_FROM = "users u LEFT JOIN user_avatars a ON a.user_id = u.id";
+
+interface UserRow {
+  id: number | bigint;
+  email: string;
+  name: string;
+  phone: string | null;
+  created_at: string;
+  avatar_at: number | bigint | null;
+}
+
+function toPublicUser(row: UserRow): PublicUser {
+  return {
+    id: Number(row.id),
+    email: row.email,
+    name: row.name,
+    phone: row.phone ?? null,
+    avatarUrl: row.avatar_at == null ? null : `/api/profile/avatar?v=${Number(row.avatar_at)}`,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadUser(id: number): Promise<PublicUser | undefined> {
+  const row = await first<UserRow>(`SELECT ${USER_COLUMNS} FROM ${USER_FROM} WHERE u.id = ?`, [id]);
+  return row ? toPublicUser(row) : undefined;
 }
 
 declare global {
@@ -49,12 +82,18 @@ export async function deleteSession(token: string): Promise<void> {
   await run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(token)]);
 }
 
+/** Al cambiar la contrasena se cierran las demas sesiones: si alguien la conocia, queda fuera. */
+export async function deleteOtherSessions(userId: number, keepToken: string | undefined): Promise<void> {
+  await run("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", [userId, keepToken ? hashToken(keepToken) : ""]);
+}
+
 async function userForToken(token: string): Promise<PublicUser | undefined> {
-  const row = await first<PublicUser>(
-    "SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+  const row = await first<UserRow>(
+    `SELECT ${USER_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id LEFT JOIN user_avatars a ON a.user_id = u.id
+     WHERE s.token_hash = ? AND s.expires_at > ?`,
     [hashToken(token), Date.now()],
   );
-  return row ? { id: Number(row.id), email: row.email, name: row.name } : undefined;
+  return row ? toPublicUser(row) : undefined;
 }
 
 export function readSessionToken(req: Request): string | undefined {
@@ -95,7 +134,7 @@ export function attachUser(req: Request, _res: Response, next: NextFunction): vo
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
-    res.status(401).json({ error: "Inicia sesion para generar niveles." });
+    res.status(401).json({ error: "Tu sesión terminó. Vuelve a iniciar sesión." });
     return;
   }
   next();

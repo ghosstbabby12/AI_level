@@ -5,12 +5,13 @@ import {
   createSession,
   deleteSession,
   hashPassword,
-  PublicUser,
+  loadUser,
   readSessionToken,
   setSessionCookie,
   verifyPassword,
 } from "../auth/auth";
 import { first, run } from "../store/db";
+import { checkEmail, checkName, checkNewPassword } from "../auth/rules";
 
 export const authRouter = Router();
 
@@ -29,57 +30,48 @@ const authLimiter = rateLimit({
   message: { error: "Demasiados intentos. Espera unos minutos e intenta de nuevo." },
 });
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MIN_PASSWORD = 8;
-
-interface UserRow extends PublicUser {
-  password_hash: string;
-}
-
 authRouter.post("/register", authLimiter, safe(async (req, res) => {
   const { name, email, password } = req.body ?? {};
-  const cleanName = typeof name === "string" ? name.trim() : "";
-  const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
-
-  if (cleanName.length === 0 || cleanName.length > 40) {
-    return res.status(400).json({ error: "Escribe un nombre de hasta 40 caracteres." });
-  }
-  if (!EMAIL_RE.test(cleanEmail) || cleanEmail.length > 254) {
-    return res.status(400).json({ error: "El correo no es valido." });
-  }
-  if (typeof password !== "string" || password.length < MIN_PASSWORD || password.length > 200) {
-    return res.status(400).json({ error: `La contrasena debe tener al menos ${MIN_PASSWORD} caracteres.` });
-  }
+  const nameCheck = checkName(name);
+  if (!nameCheck.ok) return res.status(400).json({ error: nameCheck.error });
+  const emailCheck = checkEmail(email);
+  if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+  const passwordCheck = checkNewPassword(password);
+  if (!passwordCheck.ok) return res.status(400).json({ error: passwordCheck.error });
+  const cleanName = nameCheck.value;
+  const cleanEmail = emailCheck.value;
 
   const exists = await first("SELECT 1 FROM users WHERE email = ?", [cleanEmail]);
   if (exists) {
     return res.status(409).json({ error: "Ya existe una cuenta con ese correo." });
   }
 
-  const result = await run("INSERT INTO users (email, name, password_hash, created_at) VALUES (?, ?, ?, ?)", [
+  const now = new Date().toISOString();
+  const result = await run("INSERT INTO users (email, name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", [
     cleanEmail,
     cleanName,
     hashPassword(password),
-    new Date().toISOString(),
+    now,
+    now,
   ]);
-  const user: PublicUser = { id: Number(result.lastInsertRowid), email: cleanEmail, name: cleanName };
+  const id = Number(result.lastInsertRowid);
 
-  setSessionCookie(res, await createSession(user.id));
-  return res.status(201).json({ user });
+  setSessionCookie(res, await createSession(id));
+  return res.status(201).json({ user: await loadUser(id) });
 }));
 
 authRouter.post("/login", authLimiter, safe(async (req, res) => {
   const { email, password } = req.body ?? {};
   const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
 
-  const row = await first<UserRow>("SELECT id, email, name, password_hash FROM users WHERE email = ?", [cleanEmail]);
+  const row = await first<{ id: number; password_hash: string }>("SELECT id, password_hash FROM users WHERE email = ?", [cleanEmail]);
   if (!row || typeof password !== "string" || !verifyPassword(password, row.password_hash)) {
     return res.status(401).json({ error: "Correo o contrasena incorrectos." });
   }
 
   const id = Number(row.id);
   setSessionCookie(res, await createSession(id));
-  return res.json({ user: { id, email: row.email, name: row.name } });
+  return res.json({ user: await loadUser(id) });
 }));
 
 authRouter.post("/logout", safe(async (req, res) => {
