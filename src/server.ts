@@ -5,6 +5,8 @@ import { attachUser } from "./auth/auth";
 import { authRouter } from "./routes/auth";
 import { levelsRouter } from "./routes/levels";
 import { profileRouter } from "./routes/profile";
+import { realtimeRouter } from "./routes/realtime";
+import { attachRealtime } from "./realtime/hub";
 import { dbReady } from "./store/db";
 import { recoverInterruptedGenerations } from "./store/generations";
 import { startJobMaintenance } from "./store/jobs";
@@ -35,6 +37,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/levels", levelsRouter);
 app.use("/api/profile", profileRouter);
+app.use("/api/realtime", realtimeRouter);
 
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(error);
@@ -48,12 +51,13 @@ dbReady
     if (interrupted) console.warn(`[generations] ${interrupted} juego(s) a medida interrumpidos por el reinicio`);
   })
   .then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Artificial Levels API escuchando en http://localhost:${PORT}`);
       if (!process.env.ANTHROPIC_API_KEY) {
         console.warn("ANTHROPIC_API_KEY no definida: se usara el interprete por palabras clave.");
       }
     });
+    attachRealtime(server);
   })
   .catch((error) => {
     console.error("No se pudo abrir la base de datos:", error);
