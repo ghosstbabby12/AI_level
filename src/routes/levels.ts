@@ -8,6 +8,7 @@ import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
 import { deleteLevel, encodeGrid, getLevel, isOwner, listLevels, saveCustomGame, saveLevel, StoredGame, updateLevel } from "../store/levelStore";
 import { editLevel } from "../generator/editing";
+import { levelSettings, remixLevel } from "../generator/settings";
 import { CustomGameError, CustomGameUsage, InvalidGameError, writeCustomGame } from "../generator/customGame";
 import { ReportStage } from "../store/jobs";
 import { finishCustomGeneration, GenerationEntry, linkJob, recordGeneration } from "../store/generations";
@@ -54,7 +55,7 @@ const withUrls = (level: StoredGame) => {
   const { spec: _spec, ...rest } = level as ChainedLevel;
   // Tras editar el mapa cambia la URL de la imagen, para que no se muestre la vieja guardada en cache.
   const version = level.editedAt ? `?v=${Date.parse(level.editedAt)}` : "";
-  return { ...rest, imageUrl: `/api/levels/${level.id}/image${version}`, tag: MODES[level.layout].example.tag };
+  return { ...rest, imageUrl: `/api/levels/${level.id}/image${version}`, tag: MODES[level.layout].example.tag, settings: levelSettings(level as ChainedLevel) };
 };
 
 
@@ -192,8 +193,9 @@ levelsRouter.get("/examples", (_req, res) => {
   examples ??= MODE_PRIORITY.map((mode) => {
     const { tag, text } = MODES[mode].example;
     const spec = parseDescriptionKeywords(text, EXAMPLE_SEED);
-    const { grid, ascii: _ascii, ...level } = toGeneratedLevel(`ejemplo-${mode}`, spec, buildLevel(spec), "");
-    return { tag, text, level: { ...level, rows: encodeGrid(grid) } };
+    const full = toGeneratedLevel(`ejemplo-${mode}`, spec, buildLevel(spec), "");
+    const { grid, ascii: _ascii, ...level } = full;
+    return { tag, text, level: { ...level, rows: encodeGrid(grid), settings: levelSettings(full) } };
   });
   res.setHeader("Cache-Control", "public, max-age=3600");
   return res.json(examples);
@@ -256,6 +258,29 @@ levelsRouter.get("/:id", safe(async (req, res) => {
   const level = await getLevel(req.params.id);
   if (!level) return res.status(404).json({ error: "Nivel no encontrado." });
   return res.json(withUrls(level));
+}));
+
+/**
+ * Variante con ajustes cambiados desde los chips (dificultad, cantidades, jefe), sin reescribir el pedido.
+ * Es un juego nuevo en "Mis juegos": el anterior no se pierde.
+ */
+levelsRouter.post("/:id/remix", requireAuth, generateLimiter, safe(async (req, res) => {
+  const id = req.params.id;
+  const previous = id.startsWith("ejemplo-") ? exampleLevel(id) : await getLevel(id);
+  if (!previous) return res.status(404).json({ error: "Ese nivel ya no existe." });
+  if (previous.layout === "custom") return res.status(409).json({ error: "Los juegos libres no tienen ajustes." });
+
+  const { difficulty, traps, enemies, items, boss, rounds } = req.body ?? {};
+  const remixed = remixLevel(previous as ChainedLevel, { difficulty, traps, enemies, items, boss, rounds }, uuidv4());
+  if (!remixed.ok) return res.status(400).json({ error: remixed.error, field: remixed.field });
+  let saved = true;
+  try {
+    await saveLevel(remixed.value, req.user!.id);
+  } catch (error) {
+    saved = false;
+    console.error("No se pudo guardar la variante:", error);
+  }
+  return res.status(201).json({ ...withUrls(remixed.value), saved });
 }));
 
 // Editar escenario: titulo, historia y mapa. Solo quien lo creo; lo que no llega en el cuerpo queda igual.
