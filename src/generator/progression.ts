@@ -62,6 +62,7 @@ export function specFromLevel(level: ChainedLevel): LevelSpec {
     enemies: feature(!disabled(["Enemigos", "Rivales", "Blancos moviles"])),
     items: feature(!disabled(["Objetos"])),
     kinds: level.kinds,
+    itemLabel: level.itemLabel,
     rounds: level.params?.waves ?? level.params?.laps,
     narrative: level.narrative,
   };

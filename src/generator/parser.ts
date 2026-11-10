@@ -33,6 +33,7 @@ const AiSpecSchema = z.object({
   obstacles: z.array(z.string()),
   rounds: z.number().int().nullable(),
   item_kind: z.enum(ITEM_KINDS),
+  item_label: z.string().nullable(),
   enemy_kind: z.enum(ENEMY_KINDS),
   boss_kind: z.enum(BOSS_KINDS),
   title: z.string(),
@@ -111,6 +112,7 @@ ${MODE_LIST}
 - traps / enemies / items: enabled=false si el usuario los excluye ("sin trampas"). count = numero explicito pedido ("5 enemigos" -> 5), si no null. intensity: "many" si pide muchos, "few" si pide pocos, si no "normal". Por defecto trampas y enemigos estan habilitados; items solo en platformer o si se mencionan (llaves, monedas, tesoros...).
 - rounds: vueltas (racing) u oleadas (survival) si las pide explicitamente; si no, null.
 - item_kind: como se ven los objetos que recoge el jugador: "coin" (monedas, tesoro), "gem" (gemas, cristales), "key" (llaves), "weapon" (armas, espadas), "potion" (pociones), "star" (estrellas), "fruit" (frutas). Si el usuario pide recolectar algo, activa items y elige el tipo mas cercano.
+- item_label: como llamo el usuario a lo que se recoge, en plural, minusculas y en su idioma, tal cual lo dijo ("manzanas", "cristales de hielo"; maximo 3 palabras). null si no menciona que recoger.
 - En "arcade" no hay trampas ni salida: se gana recogiendo todo. Usa items enabled=true, y para enemy_kind prefiere "ghost" si no pidieron otro.
 - enemy_kind: aspecto de los enemigos: "blob" (criatura generica), "slime", "ghost" (fantasmas, espiritus), "skeleton" (esqueletos, no muertos, zombis), "robot" (robots, maquinas, aliens), "bat" (murcielagos, criaturas voladoras), "mixed" (si pide enemigos variados, aleatorios, random o de muchos tipos). Elige el que mejor encaje con el tema aunque el usuario no lo diga (mansion embrujada -> ghost, nave espacial -> robot, cripta -> skeleton).
 - boss_kind: aspecto del jefe: "monster" (generico), "dragon", "vampire" (vampiros, nigromantes, reyes oscuros), "mech" (robot gigante). Elige el mas cercano aunque boss sea false.
@@ -169,6 +171,12 @@ function toFeature(feature: AiSpec["traps"]): FeatureSpec {
   return { enabled: feature.enabled, count, multiplier: MULTIPLIERS[feature.intensity] };
 }
 
+/** Lo que devuelve el modelo se muestra en la interfaz: solo letras y espacios, y corto. */
+function cleanItemLabel(label: string | null | undefined): string | undefined {
+  const clean = (label ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  return /^[a-záéíóúüñ ]{2,24}$/.test(clean) ? clean : undefined;
+}
+
 /** Convierte la salida del modelo en el LevelSpec que consume levelBuilder.ts. */
 export function aiSpecToLevelSpec(ai: AiSpec, description: string, seed: number): LevelSpec {
   const { width, height } = detectSize(description, ai.layout, ai.size);
@@ -186,6 +194,7 @@ export function aiSpecToLevelSpec(ai: AiSpec, description: string, seed: number)
     items: toFeature(ai.items),
     obstacles: ai.obstacles.slice(0, MAX_OBSTACLES),
     kinds: { item: ai.item_kind, enemy: ai.enemy_kind, boss: ai.boss_kind },
+    itemLabel: cleanItemLabel(ai.item_label),
     rounds: ai.rounds !== null && ai.rounds > 0 ? Math.min(ai.rounds, MAX_ROUNDS) : undefined,
     source: "ai",
     fit: ai.fit,

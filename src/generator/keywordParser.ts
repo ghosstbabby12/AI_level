@@ -105,6 +105,27 @@ export function detectRounds(text: string): number | undefined {
   return match ? Math.min(MAX_ROUNDS, Math.max(1, parseInt(match[1], 10))) : undefined;
 }
 
+// Lo que el usuario dijo que se recoge, para mostrarlo con su palabra ("18 manzanas", no "18 frutas").
+const ITEM_NOUNS = ["manzana", "cereza", "fruta", "platano", "fresa", "uva", "naranja", "espada", "hacha", "lanza", "llave", "gema", "cristal",
+  "diamante", "joya", "pocion", "elixir", "estrella", "moneda", "tesoro", "huevo", "seta", "hongo", "flor", "caramelo", "dulce", "galleta", "pez", "hueso", "perla", "rubi", "esmeralda", "pluma", "calabaza", "bellota", "zanahoria", "pastel"];
+
+/** "manzana" -> "manzanas", "pocion" -> "pociones", "pez" -> "peces". */
+export function pluralize(word: string): string {
+  if (/s$/.test(word)) return word;
+  if (/z$/.test(word)) return word.slice(0, -1) + "ces";
+  if (/[aeiouáéó]$/.test(word)) return word + "s";
+  return word.replace(/ó(n)$/, "o$1").replace(/í(n)$/, "i$1").replace(/ú(n)$/, "u$1") + "es";
+}
+
+export function detectItemLabel(description: string): string | undefined {
+  for (const raw of description.toLowerCase().match(/[a-záéíóúüñ]+/g) ?? []) {
+    const plain = normalize(raw);
+    const noun = ITEM_NOUNS.find((n) => plain === n || plain === pluralize(n) || plain === n + "s" || plain === n + "es");
+    if (noun) return pluralize(raw);
+  }
+  return undefined;
+}
+
 export function detectKinds(description: string): Kinds {
   const text = normalize(description);
   return {
@@ -250,6 +271,7 @@ export function parseDescriptionKeywords(description: string, seed?: number): Le
     enemies: toFeature(readQuantity(text, ENEMY_STEMS), true),
     items: toFeature(items, MODES[resolvedLayout].itemsByDefault ?? false),
     kinds: withLayoutDefaults(detectKinds(description), resolvedLayout),
+    itemLabel: detectItemLabel(description),
     rounds: detectRounds(text),
   };
 }

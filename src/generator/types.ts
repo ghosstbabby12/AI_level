@@ -70,6 +70,8 @@ export interface LevelSpec {
   /** Escrita por la IA; sin ella, levelBuilder usa plantillas por tema. */
   narrative?: Narrative;
   kinds?: Kinds;
+  /** Como llamo el usuario a lo que se recoge, en plural ("manzanas"); sin esto se usa el del aspecto. */
+  itemLabel?: string;
   /** Vueltas u oleadas pedidas explicitamente. */
   rounds?: number;
   /** Que tan bien encaja el pedido en un estilo existente. "custom": hay que escribir un juego nuevo. */
@@ -136,6 +138,10 @@ export interface GeneratedLevel {
   narrative: Narrative;
   adaptationNote?: string;
   kinds: Kinds;
+  /** Nombre de lo que se recoge tal como lo pidio el usuario ("manzanas"). */
+  itemLabel?: string;
+  /** Cuantas trampas, enemigos y objetos se colocaron. */
+  counts?: PlacedCounts;
   /** Instrucciones para el jugador. */
   controls: string;
   route?: Array<{ x: number; y: number }>;

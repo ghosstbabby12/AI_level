@@ -117,6 +117,7 @@ export function applyGrid(level: ChainedLevel, rows: unknown): Edit<ChainedLevel
       grid,
       ascii: renderAscii(grid, level.theme, level.layout),
       boss: spec.boss,
+      counts: placed,
       spec: level.spec ? { ...level.spec, boss: spec.boss } : undefined,
       interpretation: level.stage ? [`Nivel: ${level.stage}`, ...chips] : chips,
     },

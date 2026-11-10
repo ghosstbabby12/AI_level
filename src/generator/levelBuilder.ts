@@ -91,6 +91,7 @@ export function buildLevel(spec: LevelSpec): BuiltLevel {
 
 export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts, params: Record<string, number> = {}): string[] {
   const kinds = spec.kinds ?? DEFAULT_KINDS;
+  const itemNoun = spec.itemLabel ?? ITEM_LABEL[kinds.item];
   const feature = (label: string, enabled: boolean, count: number, noun?: string) =>
     enabled ? `${label}: ${count}${noun ? " " + noun : ""}` : `${label}: ninguno`;
 
@@ -102,7 +103,7 @@ export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts, para
     racing: [`Vueltas: ${params.laps}`, `Rivales: ${placed.enemies}`, `Filas de cajas: ${placed.items}`, `Manchas de aceite: ${placed.traps}`],
     invaders: [`Invasores: ${placed.enemies} ${ENEMY_LABEL[kinds.enemy]}`, bossChip],
     breakout: [`Bloques: ${placed.items}`, `Explosivos: ${placed.traps}`, bossChip],
-    snake: [`Por comer: ${placed.items} ${ITEM_LABEL[kinds.item]}`, `Trampas: ${placed.traps}`],
+    snake: [`Por comer: ${placed.items} ${itemNoun}`, `Trampas: ${placed.traps}`],
   };
   const chips = specific[spec.layout];
   if (chips) return [...head, ...chips];
@@ -116,8 +117,8 @@ export function describe(spec: LevelSpec, grid: Grid, placed: PlacedCounts, para
     feature("Trampas", spec.traps.enabled && spec.layout !== "arcade", placed.traps),
     feature("Enemigos", spec.enemies.enabled, placed.enemies, ENEMY_LABEL[kinds.enemy]),
     spec.layout === "arcade"
-      ? feature("Por recoger", true, placed.items, kinds.item === "coin" ? "puntos" : ITEM_LABEL[kinds.item])
-      : feature("Objetos", spec.items.enabled, placed.items, ITEM_LABEL[kinds.item]),
+      ? feature("Por recoger", true, placed.items, kinds.item === "coin" && !spec.itemLabel ? "puntos" : itemNoun)
+      : feature("Objetos", spec.items.enabled, placed.items, itemNoun),
   ];
 }
 
@@ -140,6 +141,8 @@ export function toGeneratedLevel(id: string, spec: LevelSpec, built: BuiltLevel,
     narrative: spec.narrative ?? templateNarrative(spec),
     adaptationNote: spec.adaptationNote,
     kinds: spec.kinds ?? DEFAULT_KINDS,
+    itemLabel: spec.itemLabel,
+    counts: placed,
     controls: MODES[spec.layout].controls,
     route: built.route,
     params: built.params,
