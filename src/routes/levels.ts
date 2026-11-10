@@ -14,7 +14,8 @@ import { checkCustomQuota, formatWait } from "../store/customQuota";
 import { getJob, startJob } from "../store/jobs";
 import { parseDescriptionKeywords } from "../generator/keywordParser";
 import { MODE_PRIORITY, MODES } from "../generator/modes";
-import { CustomGame, GeneratedLevel, LevelSpec } from "../generator/types";
+import { CustomGame, LevelSpec } from "../generator/types";
+import { ChainedLevel, MAX_STAGE, nextLevel } from "../generator/progression";
 
 export const levelsRouter = Router();
 
@@ -37,10 +38,12 @@ const safe = (handler: AsyncHandler) => (req: Request, res: Response, next: Next
 
 const CUSTOM_LABEL = "Juego libre";
 const CUSTOM_TAG = "Libre";
-const withUrls = (level: StoredGame) =>
-  level.layout === "custom"
-    ? { ...level, tag: CUSTOM_TAG }
-    : { ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
+// La especificacion se guarda para armar el nivel siguiente, pero no hace falta en el navegador.
+const withUrls = (level: StoredGame) => {
+  if (level.layout === "custom") return { ...level, tag: CUSTOM_TAG };
+  const { spec: _spec, ...rest } = level as ChainedLevel;
+  return { ...rest, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
+};
 
 
 async function createCustomGame(spec: LevelSpec, userId: number, onUsage: (usage: CustomGameUsage) => void, report: ReportStage) {
@@ -146,10 +149,10 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     return res.status(202).json({ job: job.id, title: spec.narrative?.title, story: spec.narrative?.story });
   }
 
-  let level: GeneratedLevel;
+  let level: ChainedLevel;
   try {
     const built = buildLevel(spec);
-    level = toGeneratedLevel(uuidv4(), spec, built, renderAscii(built.grid, spec.theme, spec.layout));
+    level = { ...toGeneratedLevel(uuidv4(), spec, built, renderAscii(built.grid, spec.theme, spec.layout)), spec };
   } catch (error) {
     track({ status: "error", errorMessage: (error as Error).message });
     return res.status(500).json({ error: (error as Error).message });
@@ -183,6 +186,45 @@ levelsRouter.get("/examples", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=3600");
   return res.json(examples);
 });
+
+/** El ejemplo de la portada de un modo, con su especificacion, para encadenar desde el. */
+function exampleLevel(id: string): ChainedLevel | undefined {
+  const mode = id.slice("ejemplo-".length);
+  if (!(MODE_PRIORITY as readonly string[]).includes(mode)) return undefined;
+  const spec = parseDescriptionKeywords(MODES[mode as keyof typeof MODES].example.text, EXAMPLE_SEED);
+  return { ...toGeneratedLevel(id, spec, buildLevel(spec), ""), spec };
+}
+
+/**
+ * Nivel siguiente, mas dificil, al superar uno. Sin IA, asi que no gasta cuota.
+ * Queda en "Mis juegos" de quien lo juega (aunque el anterior fuera compartido por otra persona).
+ */
+levelsRouter.post("/:id/next", requireAuth, generateLimiter, safe(async (req, res) => {
+  const id = req.params.id;
+  const previous = id.startsWith("ejemplo-") ? exampleLevel(id) : await getLevel(id);
+  if (!previous) return res.status(404).json({ error: "Ese nivel ya no existe." });
+  if (previous.layout === "custom") {
+    return res.status(409).json({ error: "Los juegos libres no tienen niveles siguientes. Prueba «Otra variante»." });
+  }
+  if (((previous as ChainedLevel).stage ?? 1) >= MAX_STAGE) {
+    return res.status(409).json({ error: `Llegaste al último nivel (${MAX_STAGE}). ¡Enhorabuena!` });
+  }
+
+  let level: ChainedLevel;
+  try {
+    level = nextLevel(previous as ChainedLevel, uuidv4());
+  } catch (error) {
+    return res.status(500).json({ error: (error as Error).message });
+  }
+  let saved = true;
+  try {
+    await saveLevel(level, req.user!.id);
+  } catch (error) {
+    saved = false;
+    console.error("No se pudo guardar el nivel siguiente:", error);
+  }
+  return res.status(201).json({ ...withUrls(level), saved });
+}));
 
 levelsRouter.get("/jobs/:id", requireAuth, safe(async (req, res) => {
   const job = await getJob(req.params.id, req.user!.id);
