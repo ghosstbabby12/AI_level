@@ -8,6 +8,7 @@ import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
 import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
 import { CustomGameError, CustomGameUsage, InvalidGameError, writeCustomGame } from "../generator/customGame";
+import { ReportStage } from "../store/jobs";
 import { finishCustomGeneration, GenerationEntry, linkJob, recordGeneration } from "../store/generations";
 import { checkCustomQuota, formatWait } from "../store/customQuota";
 import { getJob, startJob } from "../store/jobs";
@@ -42,8 +43,9 @@ const withUrls = (level: StoredGame) =>
     : { ...level, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
 
 
-async function createCustomGame(spec: LevelSpec, userId: number, onUsage: (usage: CustomGameUsage) => void) {
-  const html = await writeCustomGame(spec, onUsage);
+async function createCustomGame(spec: LevelSpec, userId: number, onUsage: (usage: CustomGameUsage) => void, report: ReportStage) {
+  const html = await writeCustomGame(spec, onUsage, report);
+  report("saving");
   const game: CustomGame = {
     id: uuidv4(),
     layout: "custom",
@@ -122,11 +124,11 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
     const record = track({ status: "pending" });
     let job;
     try {
-      job = await startJob(userId, async () => {
+      job = await startJob(userId, async (report) => {
         const writingStartedAt = Date.now();
         let usage: CustomGameUsage | undefined;
         try {
-          const game = await createCustomGame(spec, userId, (u) => (usage = u));
+          const game = await createCustomGame(spec, userId, (u) => (usage = u), report);
           void finishCustomGeneration(record, { status: "success", usage, latencyMs: Date.now() - writingStartedAt });
           return game;
         } catch (error) {
@@ -135,7 +137,7 @@ levelsRouter.post("/generate", requireAuth, generateLimiter, safe(async (req, re
           void finishCustomGeneration(record, { status: "error", errorMessage: detail, usage, latencyMs: Date.now() - writingStartedAt });
           throw error instanceof CustomGameError ? error : new Error("No se pudo crear el juego. Inténtalo de nuevo.");
         }
-      });
+      }, { title: spec.narrative?.title ?? null });
     } catch (error) {
       void finishCustomGeneration(record, { status: "error", errorMessage: `no se pudo iniciar el trabajo: ${(error as Error).message}`, latencyMs: 0 });
       throw error;
@@ -186,7 +188,7 @@ levelsRouter.get("/jobs/:id", requireAuth, safe(async (req, res) => {
   const job = await getJob(req.params.id, req.user!.id);
   if (!job) return res.status(404).json({ error: "Ese trabajo ya no existe. Vuelve a intentarlo." });
   if (job.status === "error") return res.status(500).json({ status: job.status, error: job.error });
-  return res.json({ status: job.status, level: job.result });
+  return res.json({ status: job.status, stage: job.stage, level: job.result });
 }));
 
 levelsRouter.get("/mine", requireAuth, safe(async (req, res) => {

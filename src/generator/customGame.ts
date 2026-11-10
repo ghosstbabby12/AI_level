@@ -138,12 +138,19 @@ function extractHtml(text: string): string {
  * onUsage recibe el total acumulado despues de cada llamada, antes de validarla: un juego
  * rechazado tambien se pago y debe quedar registrado.
  */
-export async function writeCustomGame(spec: LevelSpec, onUsage?: (usage: CustomGameUsage) => void): Promise<string> {
+export type CustomGameStage = "writing" | "validating" | "fixing";
+
+export async function writeCustomGame(
+  spec: LevelSpec,
+  onUsage?: (usage: CustomGameUsage) => void,
+  onStage?: (stage: CustomGameStage) => void,
+): Promise<string> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage(spec) }];
   let total: CustomGameUsage | null = null;
   let problems: string[] = [];
 
   for (let attempt = 1; attempt <= 2; attempt++) {
+    onStage?.(attempt === 1 ? "writing" : "fixing");
     const { text, usage, stop } = await requestGame(messages);
     total = total ? { ...usage, tokensIn: total.tokensIn + usage.tokensIn, tokensOut: total.tokensOut + usage.tokensOut } : usage;
     onUsage?.(total);
@@ -151,6 +158,7 @@ export async function writeCustomGame(spec: LevelSpec, onUsage?: (usage: CustomG
     if (stop === "max_tokens") throw new CustomGameError("El juego quedó demasiado largo y salió incompleto. Prueba a pedir algo más sencillo.");
     if (stop === "refusal") throw new CustomGameError("No se puede crear un juego con esa descripción.");
 
+    onStage?.("validating");
     const html = extractHtml(text);
     if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw new CustomGameError("El juego resultó demasiado grande. Prueba a pedir algo más sencillo.");
     problems = findGameProblems(html);

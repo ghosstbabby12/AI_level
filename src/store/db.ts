@@ -103,6 +103,8 @@ const SCHEMA = [
 // a una base que ya existe (como la de produccion), asi que se agregan si faltan.
 const ADDED_COLUMNS: Record<string, Record<string, string>> = {
   users: { phone: "TEXT", updated_at: "TEXT" },
+  // Etapa del juego a medida en marcha (writing, validating, fixing, saving), para mostrar el progreso real.
+  jobs: { stage: "TEXT" },
 };
 
 async function addMissingColumns(): Promise<void> {
