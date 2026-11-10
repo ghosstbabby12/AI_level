@@ -115,6 +115,8 @@ export interface CustomGame {
   controls: string;
   html: string;
   createdAt: string;
+  /** Ultima edicion del usuario (titulo, historia). */
+  editedAt?: string;
 }
 
 export interface GeneratedLevel {
@@ -141,4 +143,6 @@ export interface GeneratedLevel {
   /** Puntuacion de diseno (0-100) del candidato elegido entre varios. */
   quality: number;
   createdAt: string;
+  /** Ultima edicion del usuario (titulo, historia o mapa). */
+  editedAt?: string;
 }

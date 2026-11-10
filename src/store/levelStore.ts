@@ -63,6 +63,24 @@ export async function saveCustomGame(game: CustomGame, userId: number): Promise<
   remember(game);
 }
 
+/** Guarda un nivel editado. Solo si es de ese usuario; devuelve false si no lo es o ya no existe. */
+export async function updateLevel(level: StoredGame, userId: number): Promise<boolean> {
+  let data: string;
+  if (level.layout === "custom") data = JSON.stringify(level);
+  else {
+    const { grid, ascii: _ascii, ...rest } = level;
+    data = JSON.stringify({ ...rest, rows: encodeGrid(grid) });
+  }
+  const result = await run("UPDATE levels SET title = ?, data = ? WHERE id = ? AND user_id = ?", [level.narrative.title, data, level.id, userId]);
+  if (result.rowsAffected === 0) return false;
+  remember(level);
+  return true;
+}
+
+export async function isOwner(id: string, userId: number): Promise<boolean> {
+  return !!(await first("SELECT 1 FROM levels WHERE id = ? AND user_id = ?", [id, userId]));
+}
+
 export async function getLevel(id: string): Promise<StoredGame | undefined> {
   const cached = cache.get(id);
   if (cached) return cached;

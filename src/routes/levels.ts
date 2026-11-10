@@ -6,7 +6,8 @@ import { buildLevel, toGeneratedLevel } from "../generator/levelBuilder";
 import { parseDescription } from "../generator/parser";
 import { renderAscii } from "../renderer/asciiRenderer";
 import { renderSvg } from "../renderer/svgRenderer";
-import { deleteLevel, encodeGrid, getLevel, listLevels, saveCustomGame, saveLevel, StoredGame } from "../store/levelStore";
+import { deleteLevel, encodeGrid, getLevel, isOwner, listLevels, saveCustomGame, saveLevel, StoredGame, updateLevel } from "../store/levelStore";
+import { editLevel } from "../generator/editing";
 import { CustomGameError, CustomGameUsage, InvalidGameError, writeCustomGame } from "../generator/customGame";
 import { ReportStage } from "../store/jobs";
 import { finishCustomGeneration, GenerationEntry, linkJob, recordGeneration } from "../store/generations";
@@ -30,6 +31,15 @@ const generateLimiter = rateLimit({
   message: { error: "Demasiadas generaciones seguidas. Espera un minuto e intenta de nuevo." },
 });
 
+// Editar no llama a la IA: limite propio y mas amplio, para no gastar el de generar.
+const editLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Demasiados cambios seguidos. Espera un minuto e intenta de nuevo." },
+});
+
 // Express 4 no captura errores de handlers async.
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
 const safe = (handler: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
@@ -42,7 +52,9 @@ const CUSTOM_TAG = "Libre";
 const withUrls = (level: StoredGame) => {
   if (level.layout === "custom") return { ...level, tag: CUSTOM_TAG };
   const { spec: _spec, ...rest } = level as ChainedLevel;
-  return { ...rest, imageUrl: `/api/levels/${level.id}/image`, tag: MODES[level.layout].example.tag };
+  // Tras editar el mapa cambia la URL de la imagen, para que no se muestre la vieja guardada en cache.
+  const version = level.editedAt ? `?v=${Date.parse(level.editedAt)}` : "";
+  return { ...rest, imageUrl: `/api/levels/${level.id}/image${version}`, tag: MODES[level.layout].example.tag };
 };
 
 
@@ -244,6 +256,21 @@ levelsRouter.get("/:id", safe(async (req, res) => {
   const level = await getLevel(req.params.id);
   if (!level) return res.status(404).json({ error: "Nivel no encontrado." });
   return res.json(withUrls(level));
+}));
+
+// Editar escenario: titulo, historia y mapa. Solo quien lo creo; lo que no llega en el cuerpo queda igual.
+levelsRouter.patch("/:id", requireAuth, editLimiter, safe(async (req, res) => {
+  const userId = req.user!.id;
+  if (!(await isOwner(req.params.id, userId))) return res.status(404).json({ error: "Ese juego no existe o no es tuyo." });
+  const level = await getLevel(req.params.id);
+  if (!level) return res.status(404).json({ error: "Ese juego no existe o no es tuyo." });
+
+  const { title, story, rows } = req.body ?? {};
+  if (title === undefined && story === undefined && rows === undefined) return res.status(400).json({ error: "No hay cambios que guardar." });
+  const edited = editLevel(level, { title, story, rows });
+  if (!edited.ok) return res.status(400).json({ error: edited.error, field: edited.field });
+  if (!(await updateLevel(edited.value, userId))) return res.status(404).json({ error: "Ese juego no existe o no es tuyo." });
+  return res.json(withUrls(edited.value));
 }));
 
 levelsRouter.delete("/:id", requireAuth, safe(async (req, res) => {
