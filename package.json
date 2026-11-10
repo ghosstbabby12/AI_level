@@ -7,8 +7,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "node --require ts-node/register/transpile-only --test src/generator/generator.test.ts src/auth/profile.test.ts src/realtime/realtime.test.ts src/generator/progression.test.ts src/generator/editing.test.ts",
-    "test:ai": "RUN_AI_EVALS=1 node --env-file=.env --require ts-node/register/transpile-only --test src/generator/generator.test.ts src/auth/profile.test.ts src/realtime/realtime.test.ts src/generator/progression.test.ts src/generator/editing.test.ts"
+    "test": "node --require ts-node/register/transpile-only --test src/generator/generator.test.ts src/auth/profile.test.ts src/realtime/realtime.test.ts src/generator/progression.test.ts src/generator/editing.test.ts src/generator/settings.test.ts",
+    "test:ai": "RUN_AI_EVALS=1 node --env-file=.env --require ts-node/register/transpile-only --test src/generator/generator.test.ts src/auth/profile.test.ts src/realtime/realtime.test.ts src/generator/progression.test.ts src/generator/editing.test.ts src/generator/settings.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
