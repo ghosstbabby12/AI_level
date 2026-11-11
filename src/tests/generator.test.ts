@@ -1,0 +1,474 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { countCells } from "../domain/level/grid";
+import { buildLevel } from "../domain/generation/levelBuilder";
+import { decodeGrid, encodeGrid } from "../domain/level/gridCodec";
+import { parseDescriptionKeywords as parseDescription } from "../domain/interpretation/keywordParser";
+import { validateLevel } from "../domain/generation/validator";
+
+// Tests with the real AI cost money: they only run with RUN_AI_EVALS=1 (npm run test:ai).
+// The key is kept before other tests delete it to force the no-AI mode.
+const AI_KEY = process.env.RUN_AI_EVALS === "1" ? process.env.ANTHROPIC_API_KEY : undefined;
+
+// Temporary database for the whole file: tests never touch data/app.db or Turso.
+delete process.env.TURSO_DATABASE_URL;
+process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "levels-")), "test.db");
+
+const PROMPTS = [
+  "genera un mapa tipo Mario bros, esquivar trampas, diseño pixelado y un final con un final Boss",
+  "un laberinto de hielo con trampas",
+  "un laberinto grande de lava con muchos enemigos, dificil",
+  "mazmorra oscura con salas, 5 trampas y jefe final",
+  "plataformas en el espacio, dificil, sin trampas",
+  "nivel facil de bosque con monedas y sin enemigos",
+  "underwater platformer with 8 enemies and a boss",
+  "desierto pequeño",
+  "",
+];
+
+test("the parser understands the Mario prompt with a boss", () => {
+  const spec = parseDescription(PROMPTS[0], 1);
+  assert.equal(spec.layout, "platformer");
+  assert.equal(spec.theme, "overworld");
+  assert.equal(spec.boss, true);
+  assert.equal(spec.traps.enabled, true);
+  assert.equal(spec.items.enabled, true);
+});
+
+test("the parser honours negations, amounts and sizes", () => {
+  const spec = parseDescription("mazmorra con 5 trampas, sin enemigos, 41x27", 1);
+  assert.equal(spec.layout, "dungeon");
+  assert.equal(spec.traps.count, 5);
+  assert.equal(spec.enemies.enabled, false);
+  assert.equal(spec.width, 41);
+  assert.equal(spec.height, 27);
+  assert.equal(parseDescription("un laberinto de hielo", 1).theme, "ice");
+  assert.equal(parseDescription("mario", 1).theme, "overworld");
+});
+
+test("every generated level is valid and matches the request", () => {
+  for (const prompt of PROMPTS) {
+    for (let seed = 1; seed <= 60; seed++) {
+      const spec = parseDescription(prompt, seed);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+      assert.equal(countCells(grid, "trap"), placed.traps, label);
+      assert.equal(countCells(grid, "enemy"), placed.enemies, label);
+      assert.equal(countCells(grid, "item"), placed.items, label);
+      if (!spec.traps.enabled) assert.equal(placed.traps, 0, label);
+      if (!spec.enemies.enabled) assert.equal(placed.enemies, 0, label);
+      if (spec.enemies.enabled) assert.ok(placed.enemies > 0, `${label} sin enemigos`);
+    }
+  }
+});
+
+test("the same seed produces the same level", () => {
+  const a = buildLevel(parseDescription(PROMPTS[0], 42));
+  const b = buildLevel(parseDescription(PROMPTS[0], 42));
+  assert.deepEqual(a.grid, b.grid);
+});
+
+test("explicit amounts are honoured when there is room", () => {
+  const { placed } = buildLevel(parseDescription("mazmorra grande con 5 trampas y 7 enemigos", 3));
+  assert.equal(placed.traps, 5);
+  assert.equal(placed.enemies, 7);
+});
+
+test("rejects texts that do not ask for a level, with a reason", async () => {
+  // Without an API key: the local validation is tested, with no network calls.
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("../infrastructure/ai/levelInterpreter");
+
+  const rejected = ["cuando fue la guerra mundial", "hola, como estas?", "ab", "12345 !!!", "asdfg qwrty", "aaaaaaaaaa"];
+  for (const text of rejected) {
+    const result = await parseFull(text, 1);
+    assert.equal(result.ok, false, `debio rechazar: "${text}"`);
+    if (!result.ok) assert.ok(result.reason.length > 10, `sin motivo para: "${text}"`);
+  }
+
+  const accepted = ["un laberinto de hielo con trampas", "nivel ambientado en la segunda guerra mundial", "jefe final dificil", "desierto pequeño"];
+  for (const text of accepted) {
+    const result = await parseFull(text, 1);
+    assert.equal(result.ok, true, `debio aceptar: "${text}"`);
+  }
+});
+
+test("picks the best candidate and adds a narrative to the level", async () => {
+  const { toGeneratedLevel } = await import("../domain/generation/toGeneratedLevel");
+  for (const prompt of ["mazmorra con jefe final, dificil", "un laberinto de hielo con trampas", "plataformas en el espacio"]) {
+    const spec = parseDescription(prompt, 3);
+    const built = buildLevel(spec);
+    assert.ok(built.quality >= 0 && built.quality <= 100, `calidad fuera de rango: ${built.quality}`);
+
+    const level = toGeneratedLevel("id", spec, built, "");
+    assert.ok(level.narrative.title.length > 0, "sin titulo");
+    assert.ok(level.narrative.story.length > 0, "sin historia");
+    assert.equal(level.narrative.bossLine !== null, spec.boss, `frase del jefe incoherente en "${prompt}"`);
+    assert.deepEqual(toGeneratedLevel("id", spec, buildLevel(spec), "").narrative, level.narrative, "la narrativa no es deterministica");
+  }
+});
+
+test("detects the look of items, enemies and boss", async () => {
+  const { detectKinds } = await import("../domain/interpretation/kinds");
+  assert.deepEqual(detectKinds("juego de recoleccion de armas y enemigos random"), { item: "weapon", enemy: "mixed", boss: "monster" });
+  assert.deepEqual(detectKinds("mansion embrujada con fantasmas y un vampiro como jefe"), { item: "coin", enemy: "ghost", boss: "vampire" });
+  assert.deepEqual(detectKinds("cripta de esqueletos con llaves y un dragon"), { item: "key", enemy: "skeleton", boss: "dragon" });
+  assert.deepEqual(detectKinds("estacion espacial con robots y pociones"), { item: "potion", enemy: "robot", boss: "monster" });
+
+  const spec = parseDescription("juego de recoleccion de armas y enemigos", 1);
+  assert.equal(spec.items.enabled, true, "pedir armas debe activar los objetos");
+});
+
+test("builds symmetric, connected arcade boards without dead ends", () => {
+  for (const prompt of ["nivel tipo pacman", "arcade grande con jefe final, dificil", "comecocos con fantasmas pequeño"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "arcade", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      const width = grid[0].length;
+
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.ok(placed.items > 50, `${label}: pocos puntos (${placed.items})`);
+      assert.equal(countCells(grid, "power"), 4, label);
+      assert.equal(countCells(grid, "trap"), 0, label);
+      assert.equal(countCells(grid, "exit"), 0, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+      assert.ok(placed.enemies >= 3, label);
+
+      const open = (x: number, y: number) => grid[y]?.[x] !== undefined && grid[y][x] !== "wall";
+      for (let y = 1; y < grid.length - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          assert.equal(open(x, y), open(width - 1 - x, y), `${label}: asimetrico en ${x},${y}`);
+          if (!open(x, y)) continue;
+          const exits = [open(x + 1, y), open(x - 1, y), open(x, y + 1), open(x, y - 1)].filter(Boolean).length;
+          assert.ok(exits >= 2, `${label}: callejon en ${x},${y}`);
+        }
+      }
+      const tunnels = grid.filter((row) => row[0] !== "wall" && row[width - 1] !== "wall");
+      assert.equal(tunnels.length, 1, `${label}: debe haber un tunel`);
+    }
+  }
+});
+
+test("builds valid organic caves", () => {
+  for (const prompt of ["cuevas de hielo con trampas", "mina abandonada con jefe final, dificil", "caverna pequeña con monedas"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "cave", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.equal(countCells(grid, "trap"), placed.traps, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+    }
+  }
+});
+
+test("the shooter builds a gallery and honours the request", () => {
+  for (const prompt of ["tiro al blanco", "galeria de tiro dificil con jefe final", "disparar a dianas en el espacio"]) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      assert.equal(spec.layout, "shooter", prompt);
+      const { grid, placed } = buildLevel(spec);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(validateLevel(grid, spec), null, label);
+      assert.ok(placed.items >= 10, `${label}: pocas dianas (${placed.items})`);
+      assert.equal(countCells(grid, "item"), placed.items, label);
+      assert.equal(countCells(grid, "boss"), spec.boss ? 1 : 0, label);
+    }
+  }
+  const counted = buildLevel(parseDescription("tiro al blanco con 12 dianas, sin bombas", 1));
+  assert.equal(counted.placed.items, 12);
+});
+
+test("without AI, a genre that does not exist is rejected instead of replaced", async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("../infrastructure/ai/levelInterpreter");
+  for (const text of ["partida de ajedrez", "sopa de letras"]) {
+    assert.equal((await parseFull(text, 1)).ok, false, text);
+  }
+  const accepted = await parseFull("tiro al blanco", 1);
+  assert.ok(accepted.ok && accepted.spec.layout === "shooter");
+});
+
+test("every new mode is built, valid and honours the request", () => {
+  const cases: Array<[string, string]> = [
+    ["survival", "supervivencia contra hordas de zombies"],
+    ["survival", "sobrevivir a 4 oleadas con jefe final, dificil"],
+    ["racing", "carreras de autos en el desierto"],
+    ["racing", "circuito de kart pequeño, facil"],
+    ["invaders", "matamarcianos dificil con jefe final"],
+    ["invaders", "batalla de naves"],
+    ["breakout", "rompe bloques en el espacio"],
+    ["breakout", "arkanoid dificil con jefe final"],
+    ["snake", "juego de la serpiente en el bosque"],
+    ["snake", "snake dificil grande"],
+  ];
+  for (const [layout, prompt] of cases) {
+    for (let seed = 1; seed <= 25; seed++) {
+      const spec = parseDescription(prompt, seed);
+      const label = `"${prompt}" seed=${seed}`;
+      assert.equal(spec.layout, layout, label);
+      const built = buildLevel(spec);
+      assert.equal(validateLevel(built.grid, spec), null, label);
+      assert.ok(built.quality >= 0 && built.quality <= 100, label);
+    }
+  }
+  assert.equal(buildLevel(parseDescription("sobrevivir a 4 oleadas", 1)).params?.waves, 4);
+  assert.equal(buildLevel(parseDescription("carrera a 5 vueltas", 1)).params?.laps, 5);
+  assert.equal(buildLevel(parseDescription("snake con 7 manzanas", 1)).placed.items, 7);
+});
+
+test("the racing circuit is closed and drivable", () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const { grid, route } = buildLevel(parseDescription("carreras de autos", seed));
+    assert.ok(route && route.length > 60, `ruta corta en seed=${seed}`);
+    for (const p of route) assert.notEqual(grid[p.y][p.x], "wall", `ruta sobre muro seed=${seed}`);
+    const [first, last] = [route[0], route[route.length - 1]];
+    assert.ok(Math.abs(first.x - last.x) + Math.abs(first.y - last.y) <= 4, `circuito abierto seed=${seed}`);
+  }
+});
+
+test("every home page example builds the mode it announces", async () => {
+  const { MODES, MODE_PRIORITY } = await import("../domain/level/modes");
+  for (const mode of MODE_PRIORITY) {
+    const spec = parseDescription(MODES[mode].example.text, 7);
+    assert.equal(spec.layout, mode, MODES[mode].example.text);
+    assert.equal(validateLevel(buildLevel(spec).grid, spec), null, mode);
+  }
+});
+
+test("levels are saved, listed per user and deleted", async () => {
+  const { run } = await import("../infrastructure/database/client");
+  await (await import("../infrastructure/database/migrate")).dbReady;
+  const { levelRepository: store } = await import("../infrastructure/repositories/levelRepository");
+  const { toGeneratedLevel } = await import("../domain/generation/toGeneratedLevel");
+
+  await run("INSERT INTO users (id, email, name, password_hash, created_at) VALUES (1, 'a@a.co', 'A', 'x', 'now'), (2, 'b@b.co', 'B', 'x', 'now')");
+  const spec = parseDescription("carreras de autos", 3);
+  const level = toGeneratedLevel("nivel-1", spec, buildLevel(spec), "");
+  await store.save(level, 1);
+
+  // The stored row is read (not the cache): grid and route come back intact.
+  const { first } = await import("../infrastructure/database/client");
+  const row = await first<{ data: string }>("SELECT data FROM levels WHERE id = ?", ["nivel-1"]);
+  const stored = JSON.parse(row!.data);
+  assert.deepEqual(decodeGrid(stored.rows), level.grid);
+  assert.deepEqual(stored.route, level.route);
+  assert.equal(stored.narrative.title, level.narrative.title);
+  assert.equal(stored.ascii, undefined, "el ASCII no se guarda");
+
+  assert.equal((await store.listByUser(1)).length, 1);
+  assert.equal((await store.listByUser(2)).length, 0);
+  assert.equal(await store.remove("nivel-1", 2), false, "otro usuario no puede borrarlo");
+  assert.equal(await store.remove("nivel-1", 1), true);
+  assert.equal(await store.get("nivel-1"), undefined);
+  assert.deepEqual(decodeGrid(encodeGrid(level.grid)), level.grid);
+});
+
+test("jobs are stored, only their owner sees them and orphans are marked as errors", async () => {
+  const { run } = await import("../infrastructure/database/client");
+  await (await import("../infrastructure/database/migrate")).dbReady;
+  const { jobRunner } = await import("../infrastructure/jobs/jobRunner");
+  const { jobRepository } = await import("../infrastructure/repositories/jobRepository");
+  const jobs = { startJob: jobRunner.start, getJob: jobRunner.get, recoverInterruptedJobs: jobRepository.markInterrupted, deleteOldJobs: jobRepository.deleteOld };
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (1, 'a@a.co', 'A', 'x', 'now'), (2, 'b@b.co', 'B', 'x', 'now')");
+
+  let finish!: (value: unknown) => void;
+  const ok = await jobs.startJob(1, () => new Promise((resolve) => (finish = resolve)));
+  const bad = await jobs.startJob(1, async () => { throw new Error("salió incompleto"); });
+
+  // It is in the database as soon as startJob returns, even before the job finishes.
+  assert.ok(["pending", "running"].includes((await jobs.getJob(ok.id, 1))!.status));
+  assert.equal(await jobs.getJob(ok.id, 2), undefined, "otro usuario no ve el trabajo");
+
+  finish({ listo: true });
+  await new Promise((r) => setTimeout(r, 50));
+  const done = await jobs.getJob(ok.id, 1);
+  assert.equal(done?.status, "done");
+  assert.deepEqual(done?.result, { listo: true });
+  const failed = await jobs.getJob(bad.id, 1);
+  assert.equal(failed?.status, "error");
+  assert.equal(failed?.error, "salió incompleto");
+
+  // Simulates a restart: a job left "running" with no process to finish it.
+  const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+  const recent = new Date().toISOString();
+  await run("INSERT INTO jobs (id, user_id, status, created_at, updated_at) VALUES ('huerfano', 1, 'running', ?, ?), ('viejo', 1, 'done', ?, ?)", [recent, recent, old, old]);
+  assert.equal(await jobs.recoverInterruptedJobs(), 1);
+  const orphan = await jobs.getJob("huerfano", 1);
+  assert.equal(orphan?.status, "error");
+  assert.match(orphan?.error ?? "", /reinici/);
+  assert.equal((await jobs.getJob(ok.id, 1))?.status, "done", "los terminados no se tocan");
+
+  // The cleanup only deletes jobs older than 24 hours.
+  assert.equal(await jobs.deleteOldJobs(), 1);
+  assert.equal(await jobs.getJob("viejo", 1), undefined);
+  assert.ok(await jobs.getJob("huerfano", 1));
+});
+
+test("the custom game cap is per user, counts games in progress and says when a slot frees up", async () => {
+  const { run } = await import("../infrastructure/database/client");
+  await (await import("../infrastructure/database/migrate")).dbReady;
+  const { quotaRepository } = await import("../infrastructure/repositories/quotaRepository");
+  const { formatWait } = await import("../domain/shared/formatWait");
+  const { config } = await import("../config/config");
+  const checkCustomQuota = quotaRepository.check;
+  const CUSTOM_GAMES_PER_DAY = config.customGamesPerDay;
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (3, 'c@c.co', 'C', 'x', 'now'), (4, 'd@d.co', 'D', 'x', 'now')");
+
+  const now = new Date("2026-11-07T12:00:00.000Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 60 * 60_000).toISOString();
+  const addLevel = (id: string, userId: number, layout: string, createdAt: string) =>
+    run("INSERT INTO levels (id, user_id, description, title, layout, theme, data, created_at) VALUES (?, ?, 'x', 'x', ?, 'space', '{}', ?)", [id, userId, layout, createdAt]);
+
+  assert.equal(CUSTOM_GAMES_PER_DAY, 5);
+  // Outside the window, another style or another user: they do not count.
+  await addLevel("q-viejo", 3, "custom", hoursAgo(30));
+  await addLevel("q-normal", 3, "maze", hoursAgo(1));
+  await addLevel("q-otro", 4, "custom", hoursAgo(1));
+  for (const [i, h] of [20, 10, 5, 1].entries()) await addLevel(`q-${i}`, 3, "custom", hoursAgo(h));
+  assert.deepEqual(await checkCustomQuota(3, now), { allowed: true, used: 4, limit: 5 });
+
+  // A fifth one in progress uses up the cap; it frees when the oldest (20 h ago) turns 24.
+  await run("INSERT INTO jobs (id, user_id, status, created_at, updated_at) VALUES ('q-job', 3, 'running', ?, ?)", [now.toISOString(), now.toISOString()]);
+  const blocked = await checkCustomQuota(3, now);
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.used, 5);
+  if (!blocked.allowed) assert.equal(blocked.retryAt.toISOString(), new Date(now.getTime() + 4 * 60 * 60_000).toISOString());
+
+  assert.equal((await checkCustomQuota(4, now)).allowed, true, "el cupo de un usuario no afecta a otro");
+  assert.equal(formatWait(4 * 60 * 60_000), "4 h");
+  assert.equal(formatWait(3 * 60 * 60_000 + 12 * 60_000), "3 h 12 min");
+  assert.equal(formatWait(45 * 60_000), "45 min");
+  assert.equal(formatWait(10_000), "un minuto");
+});
+
+test("the parser reports how each interpretation was made", async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  const { parseDescription: parseFull } = await import("../infrastructure/ai/levelInterpreter");
+
+  const basic = await parseFull("ab", 1);
+  assert.equal(basic.ok, false);
+  assert.deepEqual(basic.trace, { source: "basic", model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 });
+
+  // Without an API key: keyword fallback, with the reason and no tokens.
+  const keywords = await parseFull("un laberinto de hielo con trampas", 1);
+  assert.equal(keywords.ok, true);
+  assert.equal(keywords.trace.source, "keywords");
+  assert.equal(keywords.trace.fallbackReason, "no_key");
+  assert.equal(keywords.trace.tokensIn, 0);
+});
+
+test("generations: logs every request, closes custom games and marks interrupted ones", async () => {
+  const { first, run } = await import("../infrastructure/database/client");
+  await (await import("../infrastructure/database/migrate")).dbReady;
+  const repo = await import("../infrastructure/repositories/generationRepository");
+  const gen = { ...repo, recordGeneration: repo.generationRepository.record, linkJob: repo.generationRepository.linkJob, finishCustomGeneration: repo.generationRepository.finishCustom };
+  await run("INSERT OR IGNORE INTO users (id, email, name, password_hash, created_at) VALUES (5, 'e@e.co', 'E', 'x', 'now')");
+  const row = (id: string) => first<Record<string, unknown>>("SELECT * FROM generations WHERE id = ?", [id]);
+  const aiTrace = { source: "ai" as const, model: "claude-sonnet-5", tokensIn: 30, tokensOut: 300, cacheRead: 5397, cacheWrite: 0 };
+
+  // A regular level: a single row, closed right away.
+  const level = gen.recordGeneration({ userId: 5, prompt: "un laberinto", trace: aiTrace, fit: "exact", layout: "maze", status: "success", latencyMs: 812.4 });
+  await level.chain;
+  const saved = await row(level.id);
+  assert.equal(saved?.status, "success");
+  assert.equal(saved?.model, "claude-sonnet-5");
+  assert.equal(Number(saved?.cache_read_tokens), 5397);
+  assert.equal(Number(saved?.latency_ms), 812);
+
+  // Quota rejection: told apart from an invalid text.
+  const quota = gen.recordGeneration({ userId: 5, prompt: "un duelo", trace: aiTrace, fit: "custom", status: "rejected", rejectionKind: "quota", latencyMs: 5 });
+  await quota.chain;
+  assert.equal((await row(quota.id))?.rejection_kind, "quota");
+
+  // Fallback after an API failure: the request succeeds, but the reason is logged.
+  const fallback = gen.recordGeneration({
+    userId: 5, prompt: "un bosque", status: "success", latencyMs: 5,
+    trace: { source: "keywords", fallbackReason: "api_error", apiError: "error de API 529: overloaded", model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+  await fallback.chain;
+  assert.equal((await row(fallback.id))?.fallback_reason, "api_error");
+  assert.match(String((await row(fallback.id))?.error_message), /529/);
+
+  // Custom game: born pending; the job closes it with its tokens in separate columns.
+  // Updates are chained after the INSERT even when requested without waiting.
+  const custom = gen.recordGeneration({ userId: 5, prompt: "un duelo", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  void gen.linkJob(custom, "job-1");
+  await gen.finishCustomGeneration(custom, { status: "success", usage: { model: "claude-sonnet-5", tokensIn: 700, tokensOut: 15000 }, latencyMs: 95_000 });
+  const done = await row(custom.id);
+  assert.equal(done?.status, "success");
+  assert.equal(done?.job_id, "job-1");
+  assert.equal(Number(done?.tokens_out), 300, "los tokens de interpretar no se mezclan con los de escribir");
+  assert.equal(Number(done?.custom_tokens_out), 15000);
+
+  // A failed game also logs what was paid.
+  const failed = gen.recordGeneration({ userId: 5, prompt: "otro duelo", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  await gen.finishCustomGeneration(failed, { status: "error", errorMessage: "El juego quedó demasiado largo", usage: { model: "claude-sonnet-5", tokensIn: 700, tokensOut: 20000 }, latencyMs: 120_000 });
+  assert.equal((await row(failed.id))?.status, "error");
+  assert.equal(Number((await row(failed.id))?.custom_tokens_out), 20000);
+
+  // Restart halfway: the pending row becomes an error and a late close no longer overwrites it.
+  const orphan = gen.recordGeneration({ userId: 5, prompt: "a medias", trace: aiTrace, fit: "custom", status: "pending", latencyMs: 900 });
+  await orphan.chain;
+  assert.equal(await gen.recoverInterruptedGenerations(), 1);
+  assert.equal((await row(orphan.id))?.error_message, gen.INTERRUPTED_ON_RESTART);
+  await gen.finishCustomGeneration(orphan, { status: "success", latencyMs: 1 });
+  assert.equal((await row(orphan.id))?.status, "error");
+  assert.equal((await row(custom.id))?.status, "success", "las terminadas no se tocan");
+
+  // A database failure does not throw: it only reaches the log.
+  const bad = gen.recordGeneration({ userId: 5, prompt: "x", trace: aiTrace, status: "success", latencyMs: 1, rejectionKind: "no_existe" as never });
+  await bad.chain;
+  assert.equal(await row(bad.id), undefined);
+});
+
+test("custom games are checked before being saved", async () => {
+  const { findGameProblems } = await import("../infrastructure/ai/gameChecks");
+  const page = (body: string) => `<!doctype html><html><body><canvas></canvas>${body}</body></html>`;
+
+  assert.deepEqual(findGameProblems(page("<script>const a = 1;\nrequestAnimationFrame(() => a);</script>")), [], "un juego correcto pasa");
+  assert.deepEqual(findGameProblems(page('<script type="application/json">{"no": "es codigo"</script><script>let x = 2;</script>')), [], "los datos no se compilan");
+
+  const syntax = findGameProblems(page("<script>let ok = 1;</script><script>function f() {\n  let x = ;\n}</script>"));
+  assert.equal(syntax.length, 1);
+  assert.match(syntax[0], /script 2, línea 2/, "dice en que script y linea esta el error");
+
+  assert.match(findGameProblems(page("<script>const best = localStorage.getItem('r');</script>")).join(), /localStorage/);
+  assert.match(findGameProblems(page('<script src="https://cdn.x/juego.js"></script>')).join(), /externo/);
+  assert.match(findGameProblems(page("<script>fetch('/api')</script>")).join(), /red/);
+  assert.match(findGameProblems("<html><body><script>let a = 1;</script>").join(), /incompleto/);
+  assert.match(findGameProblems(page("<p>sin codigo</p>")).join(), /ningún <script>/);
+});
+
+test("the AI classifies by mechanic: what no style plays becomes a custom game", { skip: !AI_KEY && "only with RUN_AI_EVALS=1 and ANTHROPIC_API_KEY (npm run test:ai)" }, async () => {
+  process.env.ANTHROPIC_API_KEY = AI_KEY;
+  const { parseDescription: parseWithAi } = await import("../infrastructure/ai/levelInterpreter");
+  const fitOf = async (text: string) => {
+    const result = await parseWithAi(text, 1);
+    assert.ok(result.ok, `rechazado: "${text}"`);
+    return result.ok ? { fit: result.spec.fit, layout: result.spec.layout, source: result.spec.source } : null;
+  };
+
+  // The core mechanic exists in no style: a new game must be written.
+  for (const text of ["juego de espadas", "un duelo de samuráis con katanas", "un juego de peleas uno contra uno", "un juego de cartas de póker"]) {
+    const got = await fitOf(text);
+    assert.equal(got?.source, "ai", `"${text}" no paso por la IA`);
+    assert.equal(got?.fit, "custom", `"${text}" deberia ir a juego a medida, fue ${JSON.stringify(got)}`);
+  }
+
+  // Control: when the mechanic exists, it is still adapted (not everything should become expensive).
+  for (const [text, layout] of [["escapar de una cárcel esquivando guardias", "dungeon"], ["un barco pirata que dispara a una flota enemiga", "invaders"]] as const) {
+    const got = await fitOf(text);
+    assert.notEqual(got?.fit, "custom", `"${text}" deberia adaptarse, fue ${JSON.stringify(got)}`);
+    assert.equal(got?.layout, layout, `"${text}"`);
+  }
+});
