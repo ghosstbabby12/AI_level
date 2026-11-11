@@ -1,65 +1,29 @@
-import "./env";
-import path from "path";
-import express from "express";
-import { attachUser } from "./auth/auth";
-import { authRouter } from "./routes/auth";
-import { levelsRouter } from "./routes/levels";
-import { profileRouter } from "./routes/profile";
-import { realtimeRouter } from "./routes/realtime";
-import { attachRealtime } from "./realtime/hub";
-import { dbReady } from "./store/db";
-import { recoverInterruptedGenerations } from "./store/generations";
-import { startJobMaintenance } from "./store/jobs";
+import "./config/env";
+import { config } from "./config/config";
+import { container } from "./container";
+import { setLevelCandidates } from "./domain/generation/levelBuilder";
+import { dbReady } from "./infrastructure/database/migrate";
+import { startJobMaintenance } from "./infrastructure/jobs/jobMaintenance";
+import { attachRealtime } from "./infrastructure/realtime/realtimeServer";
+import { recoverInterruptedGenerations } from "./infrastructure/repositories/generationRepository";
+import { createApp } from "./interfaces/http/app";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+/** Entry point: prepares the database, cleans up after a restart and starts HTTP + WebSocket. */
+async function main(): Promise<void> {
+  setLevelCandidates(config.levelCandidates);
+  await dbReady;
+  await startJobMaintenance();
+  const interrupted = await recoverInterruptedGenerations();
+  if (interrupted) console.warn(`[generations] ${interrupted} custom game(s) interrupted by the restart`);
 
-// En la nube la app corre detras de un proxy: sin esto, el limite por IP
-// veria a todos los usuarios como una sola IP (la del proxy).
-app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
-
-app.use(express.json());
-// Solo en desarrollo: sirve el frontend desde su repo para tener un unico origen.
-if (process.env.FRONTEND_DIR) {
-  app.use(express.static(path.resolve(process.env.FRONTEND_DIR)));
+  const server = createApp(container).listen(config.port, () => {
+    console.log(`Artificial Levels API listening on http://localhost:${config.port}`);
+    if (!config.anthropicKey) console.warn("ANTHROPIC_API_KEY not set: the keyword interpreter will be used.");
+  });
+  attachRealtime(server);
 }
 
-app.get("/", (_req, res) => {
-  res.json({ name: "Artificial Levels API", health: "/api/health" });
+main().catch((error) => {
+  console.error("Could not start the server:", error);
+  process.exit(1);
 });
-
-app.use(attachUser);
-
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-app.use("/api/auth", authRouter);
-app.use("/api/levels", levelsRouter);
-app.use("/api/profile", profileRouter);
-app.use("/api/realtime", realtimeRouter);
-
-app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(error);
-  res.status(500).json({ error: "Error interno. Intenta de nuevo." });
-});
-
-dbReady
-  .then(async () => {
-    await startJobMaintenance();
-    const interrupted = await recoverInterruptedGenerations();
-    if (interrupted) console.warn(`[generations] ${interrupted} juego(s) a medida interrumpidos por el reinicio`);
-  })
-  .then(() => {
-    const server = app.listen(PORT, () => {
-      console.log(`Artificial Levels API escuchando en http://localhost:${PORT}`);
-      if (!process.env.ANTHROPIC_API_KEY) {
-        console.warn("ANTHROPIC_API_KEY no definida: se usara el interprete por palabras clave.");
-      }
-    });
-    attachRealtime(server);
-  })
-  .catch((error) => {
-    console.error("No se pudo abrir la base de datos:", error);
-    process.exit(1);
-  });
